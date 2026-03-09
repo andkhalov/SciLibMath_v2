@@ -1,0 +1,80 @@
+# base.yaml — SciLibMath_v2 common configuration
+# All experiment configs inherit from this via OmegaConf merge.
+# Ref: writing/MATH.md v2.6.2, writing/TZ.md v1.6
+
+seed: 42
+device: cuda
+mixed_precision: true
+deterministic: false  # set true for exact reproducibility (slower)
+
+# --- Data (MATH.md M.0, TZ.md Sec 1) ---
+data:
+  dataset_path: data/scilibrumodal-v2-data
+  image_root: data/scilibrumodal-v2-data/img
+  batch_size: 64
+  test_fraction: 0.05  # 5% held-out, NEVER seen during training
+  num_workers: 4
+  pin_memory: true
+  # Modality fields from dataset
+  fields:
+    en: informal_statement_en
+    ru: informal_statement_ru
+    lean: formal_statement
+    latex: formula_md
+    img: image  # loaded via ImageLoadingConfig
+
+# --- Model (MATH.md M.1) ---
+model:
+  family: A  # A = 5 encoders, B = 2 encoders
+  embedding_dim: 256  # d in MATH.md
+  # Encoders
+  text_backbone: ai-forever/ruRoberta-large  # placeholder, adjust per modality
+  text_unfreeze_ratio: 0.3  # M.2.4: top 30% layers unfrozen
+  lr_embed_ratio: 0.1  # M.2.4: lr_embed = lr * this
+  # Visual encoder
+  visual_backbone: resnet50
+  visual_pretrained: true
+  # Projection heads (MATH.md M.1.1)
+  projection_hidden_dim: 512
+  projection_output_dim: 256  # = embedding_dim
+
+# --- Training ---
+training:
+  epochs: 10
+  lr: 1e-4
+  weight_decay: 0.01
+  optimizer: AdamW
+  scheduler: cosine_with_warmup
+  warmup_steps: 500
+  gradient_clip: 1.0
+  gradient_accumulation_steps: 1
+  # Unfreezing schedule (MATH.md M.2.4)
+  warmup_frozen_epochs: 1  # T_warm: backbone frozen
+  partial_unfreeze_epoch: 2  # start partial unfreezing
+
+# --- Evaluation (TZ.md Sec 9) ---
+eval:
+  eval_every_steps: 200
+  retrieval_k: [1, 3, 10]
+  # Scalability test (deferred to full training mode)
+  scalability_sizes: [10000, 25000, 50000]
+
+# --- Logging (CLAUDE.md Sec 5) ---
+logging:
+  tensorboard_dir: runs
+  s3_backup: true
+  s3_remote: scilib-store
+  s3_bucket: scilibmath-v2-logs
+  backup_every_minutes: 30
+  # What to log
+  log_loss_components: true
+  log_embeddings_every_steps: 500
+  log_similarity_matrix_every_steps: 500
+
+# --- Checkpointing ---
+checkpoint:
+  dir: checkpoints
+  save_every_epochs: 1
+  keep_best: 3
+  metric: centroid_recall_at_1  # for best model selection
+  resume_from: null  # path to checkpoint for resuming

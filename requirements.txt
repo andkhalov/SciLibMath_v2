@@ -1,0 +1,35 @@
+# SciLibMath_v2 — dependencies
+# Install: pip install -r requirements.txt
+
+# Core ML
+torch>=2.0.0
+torchvision>=0.15.0
+
+# Dataset
+datasets>=2.18.0
+huggingface_hub>=0.23.0
+Pillow>=10.0.0
+zstandard>=0.22.0
+
+# Tokenization
+tokenizers>=0.15.0
+transformers>=4.36.0
+
+# Config
+omegaconf>=2.3.0
+pyyaml>=6.0
+
+# Logging
+tensorboard>=2.14.0
+
+# Metrics & utils
+numpy>=1.24.0
+scipy>=1.11.0
+scikit-learn>=1.3.0
+tqdm>=4.66.0
+
+# Testing
+pytest>=7.4.0
+
+# S3 backup (rsync-based, uses system rsync)
+# rclone must be installed separately for S3 sync
