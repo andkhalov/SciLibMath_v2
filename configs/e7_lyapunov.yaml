@@ -1,0 +1,27 @@
+# E7: E6 + Lyapunov stability constraint
+# Ref: MATH.md M.3.7, M.7
+experiment: e7_lyapunov
+
+loss:
+  type: composite
+  tau: 0.07
+  lambda_align: 0.3
+  lambda_rad: 0.1
+  lambda_reg: 0.05
+  lambda_va: 0.1
+  w_g: 1.0
+  weights:
+    en: 1.0
+    ru: 1.0
+    lean: 1.5
+    latex: 1.5
+    img: 1.0
+
+controller:
+  alpha: 0.01
+
+lyapunov:
+  alpha: 1.0    # V_t weight for normalized loss
+  beta: 0.1     # V_t weight for ||Δλ||²
+  gamma: 0.5    # V_t weight for Var_m(w_m)
+  penalty_weight: 0.1  # How much to penalize V increase

@@ -1,0 +1,8 @@
+# E1: Pairwise InfoNCE baseline
+# Ref: MATH.md M.3.1 — standard CLIP-style for all C(5,2)=10 pairs
+experiment: e1_pairwise
+
+loss:
+  type: pairwise
+  tau: 0.07
+  lambda_va: 0.1
