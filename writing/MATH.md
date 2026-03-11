@@ -82,7 +82,7 @@ $$g_m = \text{Linear}(d'_m, d) \quad \text{(projection head)}$$
 
 Для визуальной модальности $m = \text{img}$ используется двухэтапный pipeline (см. M.1.2).
 
-**Стратегия разморозки:** верхние $\lfloor r \cdot L \rfloor$ слоёв каждого Transformer-backbone размораживаются для fine-tuning, где $r \in [0,1]$ — `text_unfreeze_ratio`, $L$ — общее число слоёв.
+**Стратегия обучения:** все слои backbone обучаются end-to-end (full fine-tuning). Discriminative learning rate: backbone получает $\text{lr}_{\text{backbone}} = \text{lr} \cdot \text{lr\_embed\_ratio}$, projection heads получают $\text{lr}$.
 
 **[Связь с v_1]** В [KHALOV-2025] архитектура Family A идентична, но визуальная модальность обрабатывалась через ViT с фиксированным $224 \times 224$. В v_2 мы переходим на ResNet + SciRus-tiny pipeline.
 
@@ -263,23 +263,21 @@ $$\mathbf{e}_{t_{\text{new}}} = \frac{1}{k} \sum_{i=1}^{k} \mathbf{e}_{t_i}$$
 
 **[Assumption A.4*]** Токенизаторы обучаются end-to-end с FVT-инициализацией (заменяет A.4).
 
-### M.2.4 Стратегия unfreezing и риск bottleneck [Paper A]
+### M.2.4 Стратегия обучения [Paper A]
 
-**[Проблема]** На ограниченном датасете SciLibModal_v2 полный end-to-end fine-tuning с первого шага может привести к переобучению embedding layer, который станет bottleneck всей сети: энкодер "запоминает" конкретные n-граммы вместо обучения семантических представлений.
+**[Решение]** Все слои backbone обучаются end-to-end с первого шага (full fine-tuning). Трёхфазная стратегия unfreezing (v2.6.2) **DEPRECATED** — избыточна для SciRus-tiny (3 слоя) на датасете ~1M объектов с FVT-инициализацией.
 
-**[Определение M.2.4 — Три фазы обучения]**
+**Обоснование:**
+- SciRus-tiny имеет $L = 3$ слоя. Частичная заморозка (top 30% = 1 слой) не даёт значимого эффекта.
+- FVT-инициализация (M.2.3) решает проблему "случайных эмбеддингов далеко от пространства модели" — новые токены начинают в корректном регионе.
+- Гетерогенная среда (4 текстовых + 1 визуальная модальность) требует адаптации всех слоёв с первого шага: заморозка замедляет кросс-модальное выравнивание.
+- WEEP-3 подтвердил: full fine-tuning с $\text{lr\_embed\_ratio} = 0.1$ даёт стабильные результаты.
 
-**Фаза 1: Warm-up** (первые $T_{\text{warm}}$ шагов). Backbone заморожен. Обучаются **только**: embedding layer (новые токены $V_{\text{new}}$), projection heads $g_m$, AlignNet. Цель: позволить новым токенам "войти" в пространство предобученной модели.
+**Discriminative learning rate:**
+- Backbone: $\text{lr}_{\text{backbone}} = \text{lr} \cdot 0.1$
+- Projection heads, AlignNet: $\text{lr}_{\text{head}} = \text{lr}$
 
-**Фаза 2: Partial unfreeze** ($T_{\text{warm}} < t < T_{\text{full}}$). Размораживаем top-$k$% слоёв backbone ($k = $ `text_unfreeze_ratio`, default $0.3$ = последние 30% слоёв). Нижние слои (generic linguistic features) заморожены.
-
-**Фаза 3: Full fine-tune** ($t > T_{\text{full}}$). Все параметры обучаемы. Discriminative learning rate: нижние слои получают $\text{lr}_{\text{low}} = \text{lr} / 10$, embedding layer получает $\text{lr}_{\text{embed}} \leq \text{lr} / 10$.
-
-**[Защита от bottleneck]**
-- Отдельный learning rate для embedding layer: $\text{lr}_{\text{embed}} \leq \text{lr}_{\text{base}} / 10$
-- Мониторинг: если $\text{Var}(\mathbf{e}_{t \in V_{\text{new}}})$ падает ниже порога — embedding collapse, early stop или откат к Фазе 2
-
-**[Assumption A.12]** `text_unfreeze_ratio` $= 0.3$, $\text{lr}_{\text{embed}} = \text{lr} / 10$.
+**[Assumption A.12]** Discriminative LR: $\text{lr\_embed\_ratio} = 0.1$. Все слои обучаемы.
 
 ---
 
@@ -610,6 +608,8 @@ $\text{conflict}_t \to 0$: градиенты согласованы. $\text{con
 
 **[Assumption A.5]** Вычисление gradient conflict требует $M$ backward passes. Альтернатива: proxy через $\text{Var}_t$ (дешевле, менее точный).
 
+**[Implementation Note — Proxy для gradient conflict]** В текущей реализации $\text{conflict}_t$ аппроксимируется через $\text{Var}_m(L_{m,t})$ вместо прямого вычисления $\cos(\nabla_\theta \mathcal{L}^m, \nabla_\theta \mathcal{L}^{m'})$. Прямое вычисление требует $O(M^2)$ backward passes — непрактично в training loop (при $M=5$ это 10 дополнительных backward passes на каждый шаг). Аппроксимация обоснована: высокая $\text{Var}_m(L_m)$ коррелирует с gradient conflict, т.к. модальности с сильно различающимися loss-значениями генерируют конфликтующие градиентные направления.
+
 **$\text{collapse}_t$** — индикатор коллапса:
 
 $$\text{collapse}_t = \text{clamp}\bigl((\bar{s}_{\text{neg},t} - 0.1) / 0.9,\; 0,\; 1\bigr)$$
@@ -783,6 +783,38 @@ $\mathbf{b}_{R2} = \mathbf{0}$.
 
 **Механизм сравнения с EMA:** В правилах R1, R5 используется сравнение текущего $\Delta L_t$ с $\text{EMA}_t$. Если $\Delta L_t \gg \text{EMA}_t$ (текущий шаг значительно хуже тренда) — усиленная реакция. Если $\Delta L_t \approx \text{EMA}_t$ — штатная динамика.
 
+### M.6.3b Стохастическое расширение T-S контроллера (Variant D)
+
+**[Определение M.6.3b — Stochastic T-S Update with Elastic Reversion]**
+
+Детерминированный T-S контроллер (M.6.3) при взаимодействии с box constraints $\Lambda$ склонен к corner-crashing: линейные консеквенты $A_r \mathbf{s}_t + \mathbf{b}_r$ систематически смещают $\boldsymbol{\lambda}_t$ к границам $\Lambda$, после чего проекция $\Pi_\Lambda$ фиксирует значения на bounds (EXP-001: все $w_m \to \ell_m$, $w_g \to u_{w_g}$, loss не сходится).
+
+**Расширение (Variant D — hybrid):**
+
+$$\mathbf{u}_t^{\det} = \sum_{r=0}^{R-1} \bar{h}_r(\tilde{\mathbf{s}}_t) \cdot (A_r \tilde{\mathbf{s}}_t + \mathbf{b}_r)$$
+
+$$\boldsymbol{\varepsilon}_t \sim \mathcal{N}(\mathbf{0}, \sigma_t^2 I), \quad \sigma_t = \sigma_0 \cdot \max\bigl(0, 1 - t/T\bigr) \quad \text{(linear annealing)}$$
+
+$$\mathbf{u}_t = \mathbf{u}_t^{\det} + \boldsymbol{\varepsilon}_t$$
+
+$$\boldsymbol{\lambda}_{t+1} = \Pi_\Lambda\bigl(\boldsymbol{\lambda}_t + \alpha \cdot \mathbf{u}_t + \gamma \cdot (\boldsymbol{\lambda}_0 - \boldsymbol{\lambda}_t)\bigr)$$
+
+где:
+- $\alpha = 0.001$ — шаг контроллера (reduced from $0.01$)
+- $\gamma = 0.01$ — коэффициент elastic mean-reversion к $\boldsymbol{\lambda}_0$
+- $\sigma_0 = 0.01$ — начальная дисперсия стохастического шума
+- $\boldsymbol{\lambda}_0$ — default значения гиперпараметров (начальная точка из конфигурации)
+- $\Lambda$ — сужённые bounds: $w_m \in [0.3, 3.0]$ (was $[0.1, 5.0]$)
+- Контроллер применяется каждые $K=10$ шагов (step frequency)
+- Warmup: $200$ шагов (raw state without controller intervention)
+
+**[Интуиция]** Три механизма предотвращают corner-crashing:
+1. **Elastic reversion** $\gamma(\boldsymbol{\lambda}_0 - \boldsymbol{\lambda}_t)$: создаёт "пружину" к default значениям, сопротивляющуюся drift к boundaries.
+2. **Stochastic noise** $\boldsymbol{\varepsilon}_t$: обеспечивает exploration; annealing постепенно убирает шум к финалу обучения.
+3. **Narrow bounds** $\Lambda$: уменьшают амплитуду возможного drift.
+
+**[Связь с M.6.3]** M.6.3b — расширение M.6.3, а не замена. При $\sigma_0 = 0$, $\gamma = 0$, $K = 1$ формула M.6.3b вырождается в M.6.3. BIBO-устойчивость (T.4) сохраняется, т.к. $\Pi_\Lambda$ по-прежнему обеспечивает bounded output.
+
 ### M.6.4 Связь с онтологией (OWL 2 / SWRL) — future work
 
 **[Замечание]** В текущей версии T-S fuzzy controller реализуется как чисто численный модуль (M.6.1-M.6.3) без интеграции с OWL 2 онтологией. Онтологическая формализация обучающих режимов (T-Box для концептов `TrainingRegime`, `CollapseRisk`, `ModalityImbalance`; SWRL-правила для связки DL-концептов с fuzzy-метками) планируется как расширение для интеграции с SciLib-инфраструктурой:
@@ -861,6 +893,21 @@ $$\|\mathbf{u}_t\| \leq U_{\max} \quad \forall t, \; \forall \mathbf{s}_t$$
 
 Это **доказано** в Теореме T.4(b) (M.9): из partition of unity ($\sum_r \bar{h}_r = 1$), bounded state (A.6), и фиксированности $A_r, \mathbf{b}_r$ следует $U_{\max} = \max_r (\|A_r\| \cdot S_{\max} + \|\mathbf{b}_r\|) < \infty$.
 
+### M.7.2b Soft Lyapunov Constraint (реализация)
+
+**[Определение M.7.2b — Soft Lyapunov Constraint]**
+
+$$\mathcal{L}_{\text{lyapunov}} = w_{\text{lyap}} \cdot \max\bigl(0,\; \Delta V_t - \xi\bigr)$$
+
+где $\Delta V_t = V_t - V_{t-1}$, $\xi > 0$ — порог допустимого роста.
+
+**[Отличие от M.7.3]** Ранняя версия (M.7.3) штрафовала $\max(0, V_t - V_{t-1} + \eta\Psi_t - \xi)$ — сложная формула с $\Psi_t$. Упрощённая версия M.7.2b штрафует только **рост** $V_t$ сверх порога $\xi$, без привлечения $\Psi_t$. Это:
+- Проще в реализации и отладке
+- Не усиливает сигнал broken controller (EXP-001: когда контроллер corner-crashed, сложный Lyapunov penalty усиливал деструктивный сигнал)
+- Допускает bounded fluctuations ($\Delta V_t \leq \xi$) без penalty
+
+**[Связь с M.7.2]** Условие M.7.2 ($\mathbb{E}[\Delta V_t] \leq -\eta\Psi_t + \xi$) — теоретическое. M.7.2b — его практическая реализация в виде мягкого ограничения.
+
 ### M.7.3 Реализация через loss regularizer
 
 На практике мы **не решаем LMI** и не доказываем устойчивость через матричные неравенства [WANG-1996]. Причина: классические LMI для T-S систем предполагают (i) непрерывное время, (ii) детерминированную динамику, (iii) полностью известную модель. Наша система — дискретная, стохастическая, с неизвестной полной моделью SGD-оптимизации. LMI-литература используется как **концептуальная аналогия** для обоснования архитектуры контроллера, а не как прямой инструмент доказательства.
@@ -909,8 +956,8 @@ $$\mathcal{L}_{\text{lyap}} = \lambda_{\text{lyap}} \cdot \max\bigl(0,\; V_t - V
 | **T.1:** Centroid InfoNCE — нижняя граница $I(C; C')$ | Theorem | Доказано (прямое следствие InfoNCE bound) | Ограничивает $I(C; C')$, НЕ $I(e^m; e^{m'})$ |
 | **T.2:** Редукция к CLIP при $M = 2$ | Theorem | Доказано (алгебраическое разложение) | Приближение при хорошем alignment |
 | **T.3:** Retrieval guarantee с margin | Theorem | Доказано (triangle inequality) | Требует A.10 (bounded $D_{\text{intra}}$ на eval set) |
-| **T.4:** BIBO-устойчивость T-S controller | Theorem | Доказано (конструктивно, через $\Pi_\Lambda$) | BIBO, не асимптотическая устойчивость. Заменяет A.9 |
-| **T.5:** Условное убывание Ляпунова | Theorem | Доказано при выполнении C1-C3 | C1-C3 эмпирически мониторятся, не гарантируются |
+| **T.4:** BIBO-устойчивость T-S controller | Theorem | Доказано (конструктивно, через $\Pi_\Lambda$) | BIBO, не асимптотическая устойчивость. Заменяет A.9. Сохраняется для M.6.3b (Variant D) |
+| **T.5:** Условное убывание Ляпунова | Theorem | Доказано при выполнении C1-C3 | C1-C3 эмпирически мониторятся, не гарантируются. Soft constraint M.7.2b |
 | **T.6:** SGD для модальных весов — квадратичный рост Var | Proposition | Доказано (алгебра + Лемма b') | Стационарность $\mathcal{L}^m$ (two-timescale). T.6(c) — design argument |
 | **T.7:** Gradient signal coverage: Centroid vs Pairwise | Theorem | Доказано (chain rule + combinatorics) | (c) предполагает независимость pairwise градиентов. (d) GC > 0 — эмпирическое |
 | **T.8:** Sample complexity для centroid retrieval | Theorem | Доказано (Bernstein + union bound) | Bound пессимистичен (union bound). Ценность — качественный результат $N_{\max} \propto \exp(CM)$ |
@@ -1545,7 +1592,7 @@ $N = 2V\ln(2/\delta)/\varepsilon_{\text{gen}}^2$. Подставляя $V_{\text
 | ~~A.9~~ | ~~Bounded controller output~~ → **Следствие T.4(b):** $\|\mathbf{u}_t\| \leq U_{\max}$ выводится из partition of unity, bounded state, компактности $\Lambda$ | M.7.2, M.9 |
 | A.10 | Bounded $D_{\text{intra}}(o_i) \leq \varepsilon$ на evaluation set (для T.3) | M.9 (T.3) |
 | A.11 | Парные визуальные + LaTeX данные для всех объектов (для $\mathcal{L}_{\text{visual\_align}}$) | M.1.2* |
-| A.12 | `text_unfreeze_ratio` = 0.3 (top 30% слоёв), `lr_embed` = lr / 10 (три фазы unfreezing) | M.2.4 |
+| A.12 | Full fine-tuning, discriminative LR: `lr_embed_ratio` = 0.1 (backbone lr = lr / 10) | M.2.4 |
 | A.13 | Sub-exponential deviations для $\|e^m - c\|^2$ (выполняется при L2-нормализации, $b=4$) | M.9 (T.8) |
 | A.14 | Approximate independence encoders (Family A): cross-modal similarities некоррелированы для разных пар $(m,m')$ | M.9 (T.9) |
 

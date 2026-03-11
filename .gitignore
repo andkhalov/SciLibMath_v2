@@ -28,6 +28,7 @@ data/scilibrumodal-v2/
 checkpoints/
 runs/
 logs/
+tokenizers/
 *.ckpt
 *.pt
 *.pth

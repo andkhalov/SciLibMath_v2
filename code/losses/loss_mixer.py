@@ -12,7 +12,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from models.family_a import MODALITIES
+from models.constants import MODALITIES
 
 
 class LossMixer(nn.Module):

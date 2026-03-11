@@ -101,19 +101,34 @@ def build_rule_matrices(alpha: float = 0.01) -> list[tuple[torch.Tensor, torch.T
     return rules
 
 
-# Box constraints for λ_t (MATH.md M.3.6)
+# Box constraints for λ_t (MATH.md M.3.6, M.6.3b — narrowed after EXP-001 corner-crashing)
 LAMBDA_BOUNDS = torch.tensor([
     [0.01, 0.2],   # τ
     [0.01, 1.0],   # λ_align
     [0.001, 0.5],  # λ_rad
     [0.001, 0.5],  # λ_reg
     [0.01, 0.5],   # λ_va
-    [0.1, 5.0],    # w_en
-    [0.1, 5.0],    # w_ru
-    [0.1, 5.0],    # w_lean
-    [0.1, 5.0],    # w_latex
-    [0.1, 5.0],    # w_img
-    [0.1, 5.0],    # w_g
+    [0.3, 3.0],    # w_en   (narrowed from [0.1, 5.0])
+    [0.3, 3.0],    # w_ru   (narrowed from [0.1, 5.0])
+    [0.3, 3.0],    # w_lean (narrowed from [0.1, 5.0])
+    [0.3, 3.0],    # w_latex(narrowed from [0.1, 5.0])
+    [0.3, 3.0],    # w_img  (narrowed from [0.1, 5.0])
+    [0.3, 3.0],    # w_g    (narrowed from [0.1, 5.0])
+])
+
+# Default λ_0 for elastic mean-reversion (MATH.md M.6.3b)
+LAMBDA_DEFAULT = torch.tensor([
+    0.07,   # τ
+    0.3,    # λ_align
+    0.1,    # λ_rad
+    0.05,   # λ_reg
+    0.1,    # λ_va
+    1.0,    # w_en
+    1.0,    # w_ru
+    1.5,    # w_lean
+    1.5,    # w_latex
+    1.0,    # w_img
+    1.0,    # w_g
 ])
 
 
@@ -124,3 +139,33 @@ def project_to_bounds(lam: torch.Tensor, bounds: torch.Tensor = None) -> torch.T
     if bounds is None:
         bounds = LAMBDA_BOUNDS.to(lam.device)
     return torch.clamp(lam, min=bounds[:, 0], max=bounds[:, 1])
+
+
+def elastic_step(
+    lambda_t: torch.Tensor,
+    u_t: torch.Tensor,
+    alpha: float = 0.001,
+    gamma: float = 0.01,
+    lambda_default: torch.Tensor = None,
+    bounds: torch.Tensor = None,
+) -> torch.Tensor:
+    """Stochastic T-S update with elastic mean-reversion (MATH.md M.6.3b).
+
+    λ_{t+1} = Π_Λ(λ_t + α · u_t + γ · (λ_0 - λ_t))
+
+    Args:
+        lambda_t: [11] current hyperparameters
+        u_t: [11] controller correction (raw, before alpha scaling)
+        alpha: controller step size
+        gamma: elastic reversion coefficient
+        lambda_default: [11] default values for reversion
+        bounds: [11, 2] box constraints
+    """
+    if lambda_default is None:
+        lambda_default = LAMBDA_DEFAULT.to(lambda_t.device)
+    else:
+        lambda_default = lambda_default.to(lambda_t.device)
+
+    reversion = gamma * (lambda_default - lambda_t)
+    lambda_new = lambda_t + alpha * u_t + reversion
+    return project_to_bounds(lambda_new, bounds)

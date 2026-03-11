@@ -37,35 +37,38 @@ class FuzzyVariable:
 
 
 # Standard linguistic variables (MATH.md M.6.2)
+# Calibrated for z-score normalized inputs: values ~[-3, 3], mean≈0, std≈1.
+# Raw s_t is normalized in TSFuzzyController._normalize_state() before fuzzification.
+
 # Loss magnitude: LO/MD/HI
 def loss_variable(name: str = "L") -> FuzzyVariable:
     return FuzzyVariable(name, {
-        "LO": (0.1, 0.15),
-        "MD": (0.5, 0.2),
-        "HI": (1.0, 0.3),
+        "LO": (-1.0, 0.5),   # below average
+        "MD": (0.0, 0.4),    # near average
+        "HI": (1.0, 0.5),    # above average
     })
 
 
 # EMA trend: DEC/STB/INC
 def trend_variable(name: str = "EMA") -> FuzzyVariable:
     return FuzzyVariable(name, {
-        "DEC": (-0.1, 0.05),
-        "STB": (0.0, 0.02),
-        "INC": (0.1, 0.05),
+        "DEC": (-1.0, 0.5),  # decreasing
+        "STB": (0.0, 0.3),   # stable
+        "INC": (1.0, 0.5),   # increasing
     })
 
 
 # Variance: LO/HI
 def variance_variable(name: str = "Var") -> FuzzyVariable:
     return FuzzyVariable(name, {
-        "LO": (0.01, 0.02),
-        "HI": (0.1, 0.05),
+        "LO": (-0.5, 0.5),   # low variance
+        "HI": (1.0, 0.5),    # high variance
     })
 
 
 # Collapse indicator: LO/HI
 def collapse_variable(name: str = "collapse") -> FuzzyVariable:
     return FuzzyVariable(name, {
-        "LO": (0.0, 0.1),
-        "HI": (0.5, 0.2),
+        "LO": (-0.5, 0.5),
+        "HI": (1.0, 0.5),
     })

@@ -1,4 +1,5 @@
 from .encoders import TextEncoder, VisualEncoder
 from .projections import ProjectionHead
-from .align_net import AlignNet
-from .family_a import FamilyA, MODALITIES, TEXT_MODALITIES
+from .constants import MODALITIES, TEXT_MODALITIES
+from .family_a import FamilyA
+from .family_b import FamilyB

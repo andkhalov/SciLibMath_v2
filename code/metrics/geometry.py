@@ -5,7 +5,7 @@ Ref: MATH.md M.3.3, M.8
 import torch
 import torch.nn.functional as F
 
-from models.family_a import MODALITIES
+from models.constants import MODALITIES
 
 
 @torch.no_grad()

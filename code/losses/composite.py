@@ -9,6 +9,12 @@ Full loss hierarchy (MATH.md M.3.4*):
 Two levels of weights:
   Level 1 (type): λ = {τ, λ_align, λ_rad, λ_reg, λ_va}
   Level 2 (modality): w = {w_en, w_ru, w_lean, w_latex, w_img, w_g}
+
+[Key design per MATH.md M.0.4, M.3.3]:
+  - embeddings and centroid arrive UNNORMALIZED from model
+  - L_align and L_rad operate in unnormalized space
+  - L_contrast normalizes internally for cosine similarity
+  - L_reg normalizes centroids internally
 """
 
 import torch
@@ -17,7 +23,7 @@ import torch.nn.functional as F
 
 from .infonce import CentroidInfoNCE, _infonce_loss
 from .alignment import AlignmentLoss, RadialLoss, AntiCollapseLoss
-from models.family_a import MODALITIES, TEXT_MODALITIES
+from models.constants import MODALITIES, TEXT_MODALITIES
 
 
 class CompositeLoss(nn.Module):
@@ -37,6 +43,14 @@ class CompositeLoss(nn.Module):
         lambda_va: float = 0.1,
         modality_weights: dict[str, float] | None = None,
         w_g: float = 1.0,
+        p_drop: float = 0.3,
+        C_clip: float = 10.0,
+        rho: float = 0.1,
+        # Adaptive temperature (MATH.md M.3.3)
+        alpha_tau: float = 0.5,
+        tau_target: float = 0.0,
+        tau_min: float = 0.01,
+        tau_max: float = 0.5,
     ):
         super().__init__()
 
@@ -48,15 +62,40 @@ class CompositeLoss(nn.Module):
         self.lambda_va = lambda_va
         self.w_g = w_g
 
+        # Adaptive temperature params (MATH.md M.3.3)
+        self.alpha_tau = alpha_tau
+        self.tau_target = tau_target
+        self.tau_min = tau_min
+        self.tau_max = tau_max
+
         # Per-modality weights (default uniform)
         default_w = {m: 1.0 for m in MODALITIES}
         self.modality_weights = modality_weights or default_w
 
         # Loss components
-        self.centroid_nce = CentroidInfoNCE(tau=tau)
-        self.alignment = AlignmentLoss()
-        self.radial = RadialLoss()
+        self.centroid_nce = CentroidInfoNCE(tau=tau, p_drop=p_drop)
+        self.alignment = AlignmentLoss(C_clip=C_clip)
+        self.radial = RadialLoss(rho=rho)
         self.anti_collapse = AntiCollapseLoss()
+
+    def _compute_adaptive_tau(self, centroid: torch.Tensor) -> float:
+        """Compute adaptive temperature τ_eff from collapse score.
+        Ref: MATH.md M.3.3
+
+        τ_eff = clamp(τ · (1 - α_τ · (s̄_neg - τ_target)), τ_min, τ_max)
+        """
+        B = centroid.size(0)
+        if B < 2:
+            return self.tau
+
+        centroid_norm = F.normalize(centroid, dim=-1)
+        S = torch.mm(centroid_norm, centroid_norm.t())
+        mask = ~torch.eye(B, dtype=torch.bool, device=S.device)
+        s_neg = S[mask].mean().item()
+
+        tau_eff = self.tau * (1.0 - self.alpha_tau * (s_neg - self.tau_target))
+        tau_eff = max(self.tau_min, min(self.tau_max, tau_eff))
+        return tau_eff
 
     def forward(
         self,
@@ -66,29 +105,34 @@ class CompositeLoss(nn.Module):
     ) -> dict[str, torch.Tensor]:
         """
         Args:
-            embeddings: {modality: [B, d]} normalized
-            centroid: [B, d] normalized
+            embeddings: {modality: [B, d]} UNNORMALIZED (per MATH.md M.0.4)
+            centroid: [B, d] UNNORMALIZED (per MATH.md M.0.4)
             visual_align_loss: scalar from AlignNet
         Returns:
             dict with 'loss' (total), all components, per-modality losses
         """
         result = {}
 
+        # Adaptive temperature (MATH.md M.3.3)
+        tau_eff = self._compute_adaptive_tau(centroid)
+        self.centroid_nce.tau = tau_eff
+        result["tau_eff"] = torch.tensor(tau_eff, device=centroid.device)
+
         # --- Global losses ---
-        # Centroid InfoNCE (MATH.md M.3.2)
+        # Centroid InfoNCE (MATH.md M.3.2) — normalizes internally
         nce_out = self.centroid_nce(embeddings, centroid)
         L_contrast = nce_out["loss"]
         result["loss_contrast_global"] = L_contrast
 
-        # Alignment (MATH.md M.3.3)
+        # Alignment in unnormalized space (MATH.md M.3.3)
         L_align = self.alignment(embeddings, centroid)
         result["loss_align_global"] = L_align
 
-        # Radial (MATH.md M.3.3)
-        L_rad = self.radial(centroid)
+        # Radial in unnormalized space (MATH.md M.3.3)
+        L_rad = self.radial(embeddings, centroid)
         result["loss_rad"] = L_rad
 
-        # Anti-collapse (MATH.md M.3.3)
+        # Anti-collapse on normalized centroids (MATH.md M.3.3)
         L_reg = self.anti_collapse(centroid)
         result["loss_reg_global"] = L_reg
 
@@ -97,17 +141,27 @@ class CompositeLoss(nn.Module):
 
         # --- Per-modality personal losses (MATH.md M.3.4) ---
         L_personal = torch.tensor(0.0, device=centroid.device)
+
+        # Pre-compute adaptive weights for personal alignment (same as global)
+        dists = {}
+        mods = list(embeddings.keys())
+        for mod in mods:
+            dists[mod] = (embeddings[mod] - centroid).norm(dim=-1)  # [B]
+        dist_sum = sum(dists.values()) + 1e-9  # [B]
+
         for mod in MODALITIES:
             w_m = self.modality_weights.get(mod, 1.0)
             emb = embeddings[mod]
 
-            # Personal alignment: ||e_m - c||^2
-            personal_align = ((emb - centroid) ** 2).sum(dim=-1).mean()
+            # Personal alignment: w_i^m · min(||e_m - c||², C_clip) (MATH.md M.3.4)
+            w_i_m = dists[mod] / dist_sum  # [B]
+            sq_dist = ((emb - centroid) ** 2).sum(dim=-1)  # [B]
+            personal_align = (w_i_m * torch.clamp(sq_dist, max=self.alignment.C_clip)).mean()
 
-            # Personal contrast: InfoNCE(e_m, c)
-            personal_contrast = _infonce_loss(emb, centroid, self.tau)
+            # Personal contrast: InfoNCE(e_m, c) — normalizes internally
+            personal_contrast = _infonce_loss(emb, centroid, tau_eff)
 
-            # Personal anti-collapse on per-modality embeddings
+            # Personal anti-collapse on per-modality embeddings (MATH.md M.3.4)
             emb_norm = F.normalize(emb, dim=-1)
             S_m = torch.mm(emb_norm, emb_norm.t())
             B = S_m.size(0)

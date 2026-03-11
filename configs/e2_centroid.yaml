@@ -1,8 +1,9 @@
-# E2: Centroid InfoNCE
-# Ref: MATH.md M.3.2 — InfoNCE with centroid as anchor
+# E2: Centroid InfoNCE with modality dropout
+# Ref: MATH.md M.3.2 — InfoNCE(ĉ, ĉ') with Bernoulli dropout p_drop=0.3
 experiment: e2_centroid
 
 loss:
   type: centroid
   tau: 0.07
+  p_drop: 0.3
   lambda_va: 0.1

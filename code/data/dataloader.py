@@ -18,24 +18,33 @@ class MultimodalCollator:
 
     Text modalities → tokenized (input_ids, attention_mask).
     Image modality → padded to max width.
+    Supports per-modality tokenizers (MATH.md M.2.3).
     """
 
     def __init__(
         self,
-        tokenizer_name: str = "sentence-transformers/all-MiniLM-L6-v2",
-        max_length: int = 256,
+        tokenizer_name: str = "mlsa-iai-msu-lab/sci-rus-tiny3.5-zh",
+        max_length: int = 128,
+        tokenizers: dict | None = None,
     ):
-        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
         self.max_length = max_length
         self._text_keys = ["en", "ru", "lean", "latex"]
+
+        if tokenizers is not None:
+            # Per-modality tokenizers (from prepare_tokenizers)
+            self._tokenizers = {k: tokenizers[k] for k in self._text_keys}
+        else:
+            # Single shared tokenizer (backward-compatible)
+            tok = AutoTokenizer.from_pretrained(tokenizer_name)
+            self._tokenizers = {k: tok for k in self._text_keys}
 
     def __call__(self, samples: list[dict]) -> dict:
         batch = {}
 
-        # Tokenize each text modality
+        # Tokenize each text modality with its own tokenizer
         for key in self._text_keys:
             texts = [s[key] for s in samples]
-            encoded = self.tokenizer(
+            encoded = self._tokenizers[key](
                 texts,
                 padding=True,
                 truncation=True,
@@ -60,14 +69,20 @@ def create_dataloaders(
     data_dir: str | Path,
     image_root: str | Path | None = None,
     batch_size: int = 64,
+    dataset_fraction: float = 1.0,
     test_fraction: float = 0.05,
     num_workers: int = 4,
     pin_memory: bool = True,
     seed: int = 42,
-    tokenizer_name: str = "sentence-transformers/all-MiniLM-L6-v2",
-    max_length: int = 256,
+    tokenizer_name: str = "mlsa-iai-msu-lab/sci-rus-tiny3.5-zh",
+    max_length: int = 128,
+    tokenizers: dict | None = None,
 ) -> tuple[DataLoader, DataLoader, int]:
     """Create train and test DataLoaders with fixed random split.
+
+    Args:
+        dataset_fraction: fraction of data to use (e.g. 0.1 for 10% ablation sweep)
+        tokenizers: per-modality tokenizer dict from prepare_tokenizers() (optional)
 
     Returns:
         (train_loader, test_loader, dataset_size)
@@ -79,6 +94,13 @@ def create_dataloaders(
     # Fixed random split
     rng = np.random.RandomState(seed)
     indices = rng.permutation(n)
+
+    # Subsample before split (for ablation sweeps)
+    if dataset_fraction < 1.0:
+        n_sample = int(n * dataset_fraction)
+        indices = indices[:n_sample]
+        n = n_sample
+
     n_test = int(n * test_fraction)
     test_idx = indices[:n_test].tolist()
     train_idx = indices[n_test:].tolist()
@@ -90,6 +112,7 @@ def create_dataloaders(
     collator = MultimodalCollator(
         tokenizer_name=tokenizer_name,
         max_length=max_length,
+        tokenizers=tokenizers,
     )
 
     train_loader = DataLoader(

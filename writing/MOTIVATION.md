@@ -148,6 +148,8 @@ T-S контроллер описывается в терминах **Descriptio
 
 Формализм T-S fuzzy систем [Wang, 1996] и LMI-based stability analysis [Mozelli & Palhares, 2010; Abdelmalek et al., 2007] адаптируется к нашей задаче: вместо управления физической системой — управление динамикой гиперпараметров мультимодального обучения.
 
+**[EXP-001 Update]** Предварительный sweep (5% данных, 3 эпохи) показал corner-crashing behavior детерминированного T-S контроллера: линейные консеквенты при взаимодействии с box constraints систематически смещали все $w_m \to \ell_m$, $w_g \to u_{w_g}$ (loss = 11.9 vs 2.5 у baseline). Это мотивирует стохастическое расширение (Variant D, MATH.md M.6.3b): elastic mean-reversion к default $\boldsymbol{\lambda}_0$, exploration noise с annealing, сужение bounds. Детали — в MATH.md M.6.3b.
+
 ---
 
 ## 4. Зачем это нужно: три сценария применения
@@ -200,7 +202,7 @@ MathLib4 содержит 200,000+ формализованных утвержд
 | Визуальная модальность | ViT, фиксированный $224 \times 224$ | Overlapping ResNet patches (stride $32$, patch $64$) $\to$ AlignNet $\to$ SciRus-tiny $\to$ mean pooling, переменная длина + $\mathcal{L}_{\text{visual\_align}}$ |
 | Токенизаторы | generic для всех | Обученные для Lean и LaTeX из корпуса SciLibModal_v2 |
 | Loss ablation | один вариант | E1-E7 (7 экспериментов, от baseline до fuzzy+Lyapunov) |
-| Управление весами | LossMixer (backprop, непрозрачный) | T-S fuzzy controller (символьный, интерпретируемый) |
+| Управление весами | LossMixer (backprop, непрозрачный) | T-S fuzzy controller (символьный, структурно интерпретируемый; интерпретируемость верифицируется эмпирически через E6/E7) |
 | Архитектура | Family A (5 энкодеров) | Family A + Family B (ablation) |
 | Стабильность | не контролируется | Lyapunov regularizer |
 | Метрики | R@k | R@k, intra-object radius, inter-centroid margin, collapse score, modality balance, variance across seeds, time-to-threshold, downstream ATP |
@@ -232,7 +234,7 @@ Venue: ICLR, ICML, NeurIPS (основная конференция по ML-ме
 
 Venue: IEEE Transactions on Fuzzy Systems, FUZZ-IEEE, NeurIPS workshop on neuro-symbolic AI.
 
-**[Замечание о стратегии публикаций]** Три статьи — это план-максимум. Минимально жизнеспособная публикация: объединение Papers A+B в одну работу ("SciLibModal_v2 + Centroid-Based Contrastive Learning for Mathematical Objects"). Paper C публикуется отдельно только если E6/E7 показывают значимое улучшение над E5. Решение принимается после получения экспериментальных результатов.
+**[Замечание о стратегии публикаций]** Три статьи — это план-максимум. Минимально жизнеспособная публикация: объединение Papers A+B в одну работу ("SciLibModal_v2 + Centroid-Based Contrastive Learning for Mathematical Objects"). Paper C публикуется отдельно только если E6/E7 показывают значимое улучшение над E5. **Статус после EXP-001:** E6/E7 с исходным детерминированным контроллером не сходились (corner-crashing). Стохастическое расширение (Variant D, MATH.md M.6.3b) разработано. Paper C conditional on successful E6/E7 rerun with Variant D.
 
 ---
 

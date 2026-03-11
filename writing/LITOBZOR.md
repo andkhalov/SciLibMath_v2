@@ -48,7 +48,7 @@ $$\mathcal{L} = \tfrac{1}{2}\bigl(\mathcal{L}_{\text{NCE}}(\text{img} \to \text{
 
 ALIGN [ALIGN-2021] масштабировал CLIP-подход на 1.8B шумных пар, показав, что шумные данные работают при достаточном масштабе. Для нас это релевантно: аугментация SciLibModal_v2 через LLM создаёт шумные пары.
 
-LiT [LIT-2022] предложил замораживать visual encoder и обучать только текстовый — locked-image tuning. Наша стратегия `text_unfreeze_ratio` (частичная разморозка) в v_1 [KHALOV-2025] — вариация этого подхода.
+LiT [LIT-2022] предложил замораживать visual encoder и обучать только текстовый — locked-image tuning. В v_1 [KHALOV-2025] использовалась частичная разморозка (`text_unfreeze_ratio`). В v_2 перешли на full fine-tuning с discriminative LR — заморозка избыточна для 3-layer SciRus-tiny с FVT-инициализацией.
 
 #### 1.4 Gap: от $M = 2$ к $M = 5$
 

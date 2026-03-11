@@ -9,7 +9,7 @@ s_t components (3 groups):
 """
 
 import torch
-from models.family_a import MODALITIES
+from models.constants import MODALITIES
 
 
 class StateTracker:
@@ -59,26 +59,28 @@ class StateTracker:
         mod_loss_vec = torch.stack([mod_losses[m] for m in MODALITIES])
         var_mod = mod_loss_vec.var()
 
-        # Collapse indicator: s̄_neg from last anti-collapse computation
-        collapse_t = loss_dict.get("loss_reg_global", torch.tensor(0.0, device=self.device)).detach()
+        # Collapse indicator: use collapse_score from geometry metrics if available,
+        # otherwise fall back to loss_reg_global as proxy
+        collapse_t = loss_dict.get("collapse_score",
+                     loss_dict.get("loss_reg_global", torch.tensor(0.0, device=self.device))).detach()
 
         # Delta align / delta reg
         delta_align = loss_dict.get("loss_align_global", torch.tensor(0.0, device=self.device)).detach()
         delta_reg = loss_dict.get("loss_reg_global", torch.tensor(0.0, device=self.device)).detach()
 
-        # Gradient conflict placeholder (needs gradient info, approximated by loss variance)
-        grad_conflict = var_mod  # Proxy: high variance ≈ conflicting gradients
+        # Loss variance proxy for gradient conflict (MATH.md M.5 Implementation Note:
+        # direct gradient cosine requires O(M²) backward passes — impractical)
+        loss_variance = var_mod  # Proxy: high Var_m(L_m) correlates with gradient conflict
 
-        # Per-modality EMA
+        # Per-modality EMA (smoothed loss value, not delta)
         for mod in MODALITIES:
-            delta_m = mod_losses[mod] - self.per_modality_ema[mod]
-            self.per_modality_ema[mod] = self.beta * self.per_modality_ema[mod] + (1 - self.beta) * delta_m
+            self.per_modality_ema[mod] = self.beta * self.per_modality_ema[mod] + (1 - self.beta) * mod_losses[mod]
 
         # Assemble s_t ∈ R^18
         # Group 1: aggregate (8)
         group1 = torch.stack([
             L_t, delta_L, self.ema_delta_loss, var_mod,
-            collapse_t, delta_align, delta_reg, grad_conflict,
+            collapse_t, delta_align, delta_reg, loss_variance,
         ])
 
         # Group 2: per-modality loss (5)

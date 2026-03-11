@@ -12,7 +12,9 @@ data:
   dataset_path: data/scilibrumodal-v2-data
   image_root: data/scilibrumodal-v2-data/img
   batch_size: 64
+  dataset_fraction: 1.0  # fraction of data to use (e.g. 0.1 for 10% ablation)
   test_fraction: 0.05  # 5% held-out, NEVER seen during training
+  max_length: 128  # SciRus-tiny supports up to 8192; 128 is sufficient for math statements
   num_workers: 4
   pin_memory: true
   # Modality fields from dataset
@@ -23,20 +25,26 @@ data:
     latex: formula_md
     img: image  # loaded via ImageLoadingConfig
 
+# --- Tokenizers (MATH.md M.2.3) ---
+tokenizer:
+  lean_vocab_size: 16000   # train BPE + extend base tokenizer
+  latex_vocab_size: 16000  # train BPE + extend base tokenizer
+  cache_dir: tokenizers    # cached trained tokenizers
+  max_corpus_samples: 0    # 0 = use full corpus for BPE training
+
 # --- Model (MATH.md M.1) ---
 model:
   family: A  # A = 5 encoders, B = 2 encoders
   embedding_dim: 256  # d in MATH.md
   # Encoders
-  text_backbone: ai-forever/ruRoberta-large  # placeholder, adjust per modality
-  text_unfreeze_ratio: 0.3  # M.2.4: top 30% layers unfrozen
-  lr_embed_ratio: 0.1  # M.2.4: lr_embed = lr * this
-  # Visual encoder
-  visual_backbone: resnet50
+  text_backbone: mlsa-iai-msu-lab/sci-rus-tiny3.5-zh  # SciRus-tiny (ModernBERT, 312d, 3 layers)
+  lr_embed_ratio: 0.1  # Discriminative LR: backbone gets lr * this, heads get lr
+  # Visual encoder (MATH.md M.1.2)
+  visual_backbone: resnet18
   visual_pretrained: true
-  # Projection heads (MATH.md M.1.1)
-  projection_hidden_dim: 512
-  projection_output_dim: 256  # = embedding_dim
+  visual_patch_size: 64
+  visual_patch_stride: 32
+  visual_align_margin: 1.0  # δ_va for visual alignment loss (MATH.md M.1.2*)
 
 # --- Training ---
 training:
@@ -48,9 +56,6 @@ training:
   warmup_steps: 500
   gradient_clip: 1.0
   gradient_accumulation_steps: 1
-  # Unfreezing schedule (MATH.md M.2.4)
-  warmup_frozen_epochs: 1  # T_warm: backbone frozen
-  partial_unfreeze_epoch: 2  # start partial unfreezing
 
 # --- Evaluation (TZ.md Sec 9) ---
 eval:
@@ -76,5 +81,5 @@ checkpoint:
   dir: checkpoints
   save_every_epochs: 1
   keep_best: 3
-  metric: centroid_recall_at_1  # for best model selection
+  metric: mean_crossmodal_R@1  # primary metric (centroid LOO R@1 saturates — see EXP-001)
   resume_from: null  # path to checkpoint for resuming

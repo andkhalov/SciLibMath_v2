@@ -1,6 +1,9 @@
-# E4: Full composite loss with static weights
-# Ref: MATH.md M.3.4, M.3.4* (loss anatomy)
-experiment: e4_composite_static
+# E4B: Full composite loss with static weights — Family B (shared encoder)
+# Ref: MATH.md M.1.3, M.3.4
+experiment: e4b_composite_static
+
+model:
+  family: B
 
 loss:
   type: composite
@@ -20,6 +23,6 @@ loss:
   weights:
     en: 1.0
     ru: 1.0
-    lean: 1.5   # Higher weight for formal modalities (more signal)
+    lean: 1.5
     latex: 1.5
     img: 1.0

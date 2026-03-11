@@ -26,8 +26,8 @@ import torch.nn.functional as F
 
 from utils import load_config, save_config, set_seed, get_device, get_amp_context
 from utils import CheckpointState, save_checkpoint, load_checkpoint, manage_checkpoints
-from data import create_dataloaders
-from models import FamilyA, MODALITIES
+from data import create_dataloaders, prepare_tokenizers, fvt_initialize
+from models import FamilyA, FamilyB, MODALITIES
 from losses import PairwiseInfoNCE, CentroidInfoNCE, CompositeLoss, LossMixerComposite
 from losses.alignment import AlignmentLoss, RadialLoss, AntiCollapseLoss
 from metrics import compute_retrieval_metrics, compute_geometry_metrics
@@ -40,13 +40,18 @@ def build_loss_fn(cfg):
     exp = cfg.experiment
     loss_cfg = cfg.loss
 
-    if exp == "e1_pairwise":
+    if exp in ("e1_pairwise", "e1b_pairwise"):
         return PairwiseInfoNCE(tau=loss_cfg.tau), "pairwise"
 
-    elif exp == "e2_centroid":
-        return CentroidInfoNCE(tau=loss_cfg.tau), "centroid"
+    elif exp in ("e2_centroid", "e2b_centroid"):
+        return CentroidInfoNCE(
+            tau=loss_cfg.tau,
+            p_drop=loss_cfg.get("p_drop", 0.3),
+        ), "centroid"
 
-    elif exp in ("e3_centroid_reg", "e4_composite_static", "e6_fuzzy", "e7_lyapunov"):
+    elif exp in ("e3_centroid_reg", "e3b_centroid_reg",
+                 "e4_composite_static", "e4b_composite_static",
+                 "e6_fuzzy", "e7_lyapunov"):
         weights = dict(loss_cfg.get("weights", {}))
         return CompositeLoss(
             tau=loss_cfg.tau,
@@ -56,6 +61,13 @@ def build_loss_fn(cfg):
             lambda_va=loss_cfg.lambda_va,
             modality_weights=weights,
             w_g=loss_cfg.get("w_g", 1.0),
+            p_drop=loss_cfg.get("p_drop", 0.3),
+            C_clip=loss_cfg.get("C_clip", 10.0),
+            rho=loss_cfg.get("rho", 0.1),
+            alpha_tau=loss_cfg.get("alpha_tau", 0.5),
+            tau_target=loss_cfg.get("tau_target", 0.0),
+            tau_min=loss_cfg.get("tau_min", 0.01),
+            tau_max=loss_cfg.get("tau_max", 0.5),
         ), "composite"
 
     elif exp == "e5_composite_learnable":
@@ -65,6 +77,13 @@ def build_loss_fn(cfg):
             lambda_rad=loss_cfg.lambda_rad,
             lambda_reg=loss_cfg.lambda_reg,
             lambda_va=loss_cfg.lambda_va,
+            p_drop=loss_cfg.get("p_drop", 0.3),
+            C_clip=loss_cfg.get("C_clip", 10.0),
+            rho=loss_cfg.get("rho", 0.1),
+            alpha_tau=loss_cfg.get("alpha_tau", 0.5),
+            tau_target=loss_cfg.get("tau_target", 0.0),
+            tau_min=loss_cfg.get("tau_min", 0.01),
+            tau_max=loss_cfg.get("tau_max", 0.5),
         ), "mixer"
 
     else:
@@ -72,15 +91,15 @@ def build_loss_fn(cfg):
 
 
 def train_step_pairwise(model, batch, loss_fn, device):
-    """E1: Pairwise InfoNCE step."""
+    """E1: Pairwise InfoNCE step. _infonce_loss normalizes internally."""
     out = model(batch)
-    result = loss_fn(out["embeddings"])
+    result = loss_fn(out["embeddings"])  # embeddings unnormalized; loss normalizes
     result["visual_align_loss"] = out["visual_align_loss"]
     return result
 
 
 def train_step_centroid(model, batch, loss_fn, device):
-    """E2: Centroid InfoNCE step."""
+    """E2: Centroid InfoNCE step. Centroid unnormalized; loss normalizes internally."""
     out = model(batch)
     result = loss_fn(out["embeddings"], out["centroid"])
     result["visual_align_loss"] = out["visual_align_loss"]
@@ -88,7 +107,7 @@ def train_step_centroid(model, batch, loss_fn, device):
 
 
 def train_step_composite(model, batch, loss_fn, device):
-    """E3/E4/E6/E7: Composite loss step."""
+    """E3/E4/E6/E7: Composite loss step. Gets UNNORMALIZED embeddings+centroid per M.0.4."""
     out = model(batch)
     result = loss_fn(out["embeddings"], out["centroid"], out["visual_align_loss"])
     return result
@@ -96,7 +115,14 @@ def train_step_composite(model, batch, loss_fn, device):
 
 @torch.no_grad()
 def evaluate(model, test_loader, device, ks=[1, 3, 10]):
-    """Run evaluation on test set: retrieval + geometry metrics."""
+    """Run evaluation on test set: retrieval + geometry metrics.
+
+    Per MATH.md M.0.4: model returns unnormalized embeddings/centroids.
+    - Retrieval: uses normalized (cosine similarity)
+    - Geometry: uses unnormalized (D_intra, D_inter in euclidean)
+
+    Returns (metrics_dict, embeddings_raw, centroids_raw) for visualization.
+    """
     model.eval()
     all_embeddings = {m: [] for m in MODALITIES}
     all_centroids = []
@@ -109,16 +135,20 @@ def evaluate(model, test_loader, device, ks=[1, 3, 10]):
             all_embeddings[m].append(out["embeddings"][m].cpu())
         all_centroids.append(out["centroid"].cpu())
 
-    # Concatenate
+    # Concatenate (unnormalized)
     embeddings = {m: torch.cat(all_embeddings[m], dim=0) for m in MODALITIES}
     centroids = torch.cat(all_centroids, dim=0)
 
-    # Compute metrics
-    retrieval = compute_retrieval_metrics(embeddings, centroids, ks)
+    # Geometry uses unnormalized embeddings/centroids
     geometry = compute_geometry_metrics(embeddings, centroids)
 
+    # Retrieval uses normalized (cosine similarity)
+    embeddings_norm = {m: F.normalize(emb, dim=-1) for m, emb in embeddings.items()}
+    centroids_norm = F.normalize(centroids, dim=-1)
+    retrieval = compute_retrieval_metrics(embeddings_norm, centroids_norm, ks)
+
     model.train()
-    return {**retrieval, **geometry}
+    return {**retrieval, **geometry}, embeddings, centroids
 
 
 def main():
@@ -135,31 +165,94 @@ def main():
     device = get_device(cfg.device)
     print(f"Device: {device}")
 
+    # Tokenizers (MATH.md M.2.3)
+    family = cfg.model.get("family", "A")
+    text_backbone = cfg.model.get("text_backbone", "mlsa-iai-msu-lab/sci-rus-tiny3.5-zh")
+    tok_cfg = cfg.get("tokenizer", {})
+    lean_vocab_size = tok_cfg.get("lean_vocab_size", None)
+    latex_vocab_size = tok_cfg.get("latex_vocab_size", None)
+
+    tokenizers_dict = None
+    if lean_vocab_size or latex_vocab_size:
+        print("Preparing custom tokenizers (MATH.md M.2.3)...")
+        tokenizers_dict = prepare_tokenizers(
+            data_dir=cfg.data.dataset_path,
+            base_name=text_backbone,
+            lean_vocab_size=lean_vocab_size or 16000,
+            latex_vocab_size=latex_vocab_size or 16000,
+            cache_dir=tok_cfg.get("cache_dir", "tokenizers"),
+            max_corpus_samples=tok_cfg.get("max_corpus_samples", 0),
+        )
+        print(f"  Base vocab: {len(tokenizers_dict['base'])}, "
+              f"Lean vocab: {len(tokenizers_dict['lean'])} (+{len(tokenizers_dict['lean_new_tokens'])}), "
+              f"LaTeX vocab: {len(tokenizers_dict['latex'])} (+{len(tokenizers_dict['latex_new_tokens'])})")
+
     # Data
     print("Loading data...")
     train_loader, test_loader, dataset_size = create_dataloaders(
         data_dir=cfg.data.dataset_path,
         image_root=cfg.data.get("image_root"),
         batch_size=cfg.data.batch_size,
+        dataset_fraction=cfg.data.get("dataset_fraction", 1.0),
         test_fraction=cfg.data.test_fraction,
         num_workers=cfg.data.num_workers,
         pin_memory=cfg.data.get("pin_memory", True),
         seed=cfg.seed,
-        tokenizer_name=cfg.model.get("text_backbone", "sentence-transformers/all-MiniLM-L6-v2"),
-        max_length=cfg.data.get("max_length", 256),
+        tokenizer_name=text_backbone,
+        max_length=cfg.data.get("max_length", 128),
+        tokenizers=tokenizers_dict,
     )
     print(f"Dataset: {dataset_size} total, train: {len(train_loader.dataset)}, test: {len(test_loader.dataset)}")
 
-    # Model
-    print("Building model...")
-    model = FamilyA(
-        text_backbone=cfg.model.text_backbone,
-        visual_backbone=cfg.model.visual_backbone,
-        visual_pretrained=cfg.model.visual_pretrained,
-        embedding_dim=cfg.model.embedding_dim,
-        projection_hidden_dim=cfg.model.projection_hidden_dim,
-        text_unfreeze_ratio=cfg.model.get("text_unfreeze_ratio", 1.0),
-    ).to(device)
+    # Model — dispatch Family A vs Family B
+    va_margin = cfg.model.get("visual_align_margin", 1.0)
+    print(f"Building model (Family {family})...")
+    if family == "B":
+        # Family B: shared vocab = union of base + lean_new + latex_new
+        shared_vocab_size = None
+        if tokenizers_dict:
+            shared_vocab_size = max(
+                len(tokenizers_dict["lean"]),
+                len(tokenizers_dict["latex"]),
+            )
+        model = FamilyB(
+            text_backbone=text_backbone,
+            visual_backbone=cfg.model.visual_backbone,
+            visual_pretrained=cfg.model.get("visual_pretrained", True),
+            embedding_dim=cfg.model.embedding_dim,
+            visual_patch_size=cfg.model.get("visual_patch_size", 64),
+            visual_patch_stride=cfg.model.get("visual_patch_stride", 32),
+            visual_align_margin=va_margin,
+            shared_vocab_size=shared_vocab_size,
+        ).to(device)
+        # FVT init for shared encoder (all new tokens)
+        if tokenizers_dict:
+            all_new = sorted(set(tokenizers_dict["lean_new_tokens"]) | set(tokenizers_dict["latex_new_tokens"]))
+            fvt_initialize(model.text_encoder, tokenizers_dict["base"], tokenizers_dict["lean"], all_new)
+            print(f"  FVT initialized {len(all_new)} new tokens in shared encoder")
+    else:
+        # Family A: separate encoders, vocab extension per modality
+        _lean_vs = len(tokenizers_dict["lean"]) if tokenizers_dict else None
+        _latex_vs = len(tokenizers_dict["latex"]) if tokenizers_dict else None
+        model = FamilyA(
+            text_backbone=text_backbone,
+            visual_backbone=cfg.model.visual_backbone,
+            visual_pretrained=cfg.model.get("visual_pretrained", True),
+            embedding_dim=cfg.model.embedding_dim,
+            visual_patch_size=cfg.model.get("visual_patch_size", 64),
+            visual_patch_stride=cfg.model.get("visual_patch_stride", 32),
+            visual_align_margin=va_margin,
+            lean_vocab_size=_lean_vs,
+            latex_vocab_size=_latex_vs,
+        ).to(device)
+        # FVT init per modality
+        if tokenizers_dict:
+            fvt_initialize(model.text_encoders["lean"], tokenizers_dict["base"],
+                           tokenizers_dict["lean"], tokenizers_dict["lean_new_tokens"])
+            fvt_initialize(model.text_encoders["latex"], tokenizers_dict["base"],
+                           tokenizers_dict["latex"], tokenizers_dict["latex_new_tokens"])
+            print(f"  FVT initialized: lean +{len(tokenizers_dict['lean_new_tokens'])}, "
+                  f"latex +{len(tokenizers_dict['latex_new_tokens'])}")
 
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -182,15 +275,28 @@ def main():
     state_tracker = None
     lyapunov = None
     if cfg.experiment in ("e6_fuzzy", "e7_lyapunov"):
+        ctrl_cfg = cfg.get("controller", {})
+        total_training_steps = len(train_loader) * cfg.training.epochs
         controller = TSFuzzyController(
-            alpha=cfg.get("controller", {}).get("alpha", 0.01),
+            alpha=ctrl_cfg.get("alpha", 0.001),
             device=device,
+            warmup_steps=ctrl_cfg.get("warmup_steps", 200),
+            step_frequency=ctrl_cfg.get("step_frequency", 10),
+            noise_sigma=ctrl_cfg.get("noise_sigma", 0.01),
+            noise_anneal=ctrl_cfg.get("noise_anneal", True),
+            elastic_gamma=ctrl_cfg.get("elastic_gamma", 0.01),
+            total_steps=total_training_steps,
         )
         state_tracker = StateTracker(beta=0.99, device=device)
 
     if cfg.experiment == "e7_lyapunov":
+        lyap_cfg = cfg.get("lyapunov", {})
         lyapunov = LyapunovRegularizer(
-            penalty_weight=cfg.get("lyapunov", {}).get("penalty_weight", 0.1),
+            alpha=lyap_cfg.get("alpha", 1.0),
+            beta=lyap_cfg.get("beta", 0.1),
+            gamma=lyap_cfg.get("gamma", 0.5),
+            penalty_weight=lyap_cfg.get("penalty_weight", 0.1),
+            xi=lyap_cfg.get("xi", 0.01),
             device=device,
         )
 
@@ -211,11 +317,12 @@ def main():
     total_steps = len(train_loader) * cfg.training.epochs
     warmup_steps = cfg.training.get("warmup_steps", 500)
 
+    pct_start = min(warmup_steps / total_steps, 0.3) if total_steps > 0 else 0.1
     scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer,
         max_lr=[pg["lr"] for pg in param_groups],
         total_steps=total_steps,
-        pct_start=warmup_steps / total_steps if total_steps > 0 else 0.1,
+        pct_start=pct_start,
     )
 
     # Mixed precision
@@ -351,14 +458,35 @@ def main():
                     "epoch": epoch,
                 }, global_step)
 
+            # Log backbone weight norms (verify backbone is training)
+            if global_step % 100 == 0:
+                if hasattr(model, "text_encoders"):
+                    # Family A: separate encoders per modality
+                    for mod in ["en", "ru", "lean", "latex"]:
+                        enc = model.text_encoders[mod]
+                        w_norm = sum(p.data.norm().item() for p in enc.backbone.parameters())
+                        logger.log_scalar(f"weight_norm/{mod}_backbone", w_norm, global_step)
+                else:
+                    # Family B: single shared encoder
+                    w_norm = sum(p.data.norm().item() for p in model.text_encoder.backbone.parameters())
+                    logger.log_scalar("weight_norm/shared_text_backbone", w_norm, global_step)
+                vis_w = sum(p.data.norm().item() for p in model.visual_encoder.parameters())
+                logger.log_scalar("weight_norm/visual_encoder", vis_w, global_step)
+
             # Evaluation
             if global_step > 0 and global_step % eval_every == 0:
                 print(f"\n[Step {global_step}] Evaluating...")
-                metrics = evaluate(model, test_loader, device, cfg.eval.retrieval_k)
+                metrics, eval_embs, eval_cents = evaluate(model, test_loader, device, cfg.eval.retrieval_k)
                 logger.log_eval_metrics(metrics, global_step)
 
-                # Check for best model
-                key_metric = metrics.get(f"centroid_R@{cfg.eval.retrieval_k[0]}", 0)
+                # Visualizations: retrieval matrix heatmap + PCA simplex
+                logger.log_retrieval_matrix(metrics, global_step)
+                logger.log_pca_simplex(eval_embs, eval_cents, global_step, n_objects=5)
+
+                # Check for best model (primary: mean_crossmodal_R@k, fallback: centroid_R@k)
+                k0 = cfg.eval.retrieval_k[0]
+                key_metric = metrics.get(f"mean_crossmodal_R@{k0}",
+                             metrics.get(f"centroid_R@{k0}", 0))
                 if key_metric > ckpt_state.best_metric:
                     ckpt_state.best_metric = key_metric
                     ckpt_state.best_epoch = epoch
@@ -366,13 +494,13 @@ def main():
                         Path(cfg.checkpoint.dir) / cfg.experiment / "best_model.pt",
                         model, optimizer, scheduler, ckpt_state, cfg, scaler,
                     )
-                    print(f"  New best: R@{cfg.eval.retrieval_k[0]}={key_metric:.4f}")
+                    print(f"  New best: mean_crossmodal_R@{k0}={key_metric:.4f}")
 
                 # Print key metrics
                 for k in cfg.eval.retrieval_k:
-                    r_key = f"centroid_R@{k}"
-                    if r_key in metrics:
-                        print(f"  {r_key}: {metrics[r_key]:.4f}", end="  ")
+                    cm_key = f"mean_crossmodal_R@{k}"
+                    if cm_key in metrics:
+                        print(f"  {cm_key}: {metrics[cm_key]:.4f}", end="  ")
                 print(f"  D_intra: {metrics.get('D_intra', 0):.4f}  collapse: {metrics.get('collapse_score', 0):.4f}")
 
             ckpt_state.global_step += 1
@@ -396,8 +524,10 @@ def main():
 
     # Final evaluation
     print("\n=== Final Evaluation ===")
-    final_metrics = evaluate(model, test_loader, device, cfg.eval.retrieval_k)
+    final_metrics, final_embs, final_cents = evaluate(model, test_loader, device, cfg.eval.retrieval_k)
     logger.log_eval_metrics(final_metrics, ckpt_state.global_step)
+    logger.log_retrieval_matrix(final_metrics, ckpt_state.global_step)
+    logger.log_pca_simplex(final_embs, final_cents, ckpt_state.global_step, n_objects=5)
 
     for name, value in sorted(final_metrics.items()):
         print(f"  {name}: {value:.4f}")

@@ -1,0 +1,15 @@
+# ablation_10pct.yaml — Overrides for 10% ablation sweep
+# Apply via CLI: python code/train.py --config configs/e1_pairwise.yaml \
+#   data.dataset_fraction=0.1 data.batch_size=384 ...
+# Or merge this file with experiment config.
+
+data:
+  dataset_fraction: 0.1
+  batch_size: 64  # RTX 3090 24GB: bs=128 OOMs on worst-case batches (5×SciRus-tiny + patch-based VisualEncoder)
+  num_workers: 8
+
+training:
+  epochs: 3
+
+eval:
+  eval_every_steps: 50

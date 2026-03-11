@@ -1,0 +1,12 @@
+# E2B: Centroid InfoNCE with modality dropout — Family B (shared encoder)
+# Ref: MATH.md M.1.3, M.3.2
+experiment: e2b_centroid
+
+model:
+  family: B
+
+loss:
+  type: centroid
+  tau: 0.07
+  p_drop: 0.3
+  lambda_va: 0.1

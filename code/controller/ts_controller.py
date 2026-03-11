@@ -11,7 +11,7 @@ from .membership import (
     loss_variable, trend_variable, variance_variable, collapse_variable,
     FuzzyVariable,
 )
-from .rules import build_rule_matrices, project_to_bounds, U_DIM
+from .rules import build_rule_matrices, project_to_bounds, elastic_step, U_DIM, LAMBDA_DEFAULT
 
 
 class TSFuzzyController:
@@ -22,9 +22,15 @@ class TSFuzzyController:
     7 rules R0-R6 with Gaussian antecedent MFs.
     """
 
-    def __init__(self, alpha: float = 0.01, device: torch.device = None):
+    def __init__(self, alpha: float = 0.001, device: torch.device = None,
+                 warmup_steps: int = 200, norm_momentum: float = 0.99,
+                 step_frequency: int = 10, noise_sigma: float = 0.01,
+                 noise_anneal: bool = True, elastic_gamma: float = 0.01,
+                 total_steps: int = 10000):
         self.device = device or torch.device("cpu")
-        self.rules = build_rule_matrices(alpha)
+        self.alpha = alpha
+        # Build rules with alpha=1.0 (scaling handled in elastic_step)
+        self.rules = build_rule_matrices(alpha=1.0)
 
         # Move to device
         self.rules = [(A.to(self.device), b.to(self.device)) for A, b in self.rules]
@@ -35,6 +41,38 @@ class TSFuzzyController:
         self.lv_var = variance_variable("Var")
         self.lv_collapse = collapse_variable("collapse")
 
+        # Running z-score normalization (Bug 3a fix)
+        self.running_mean = torch.zeros(18, device=self.device)
+        self.running_var = torch.ones(18, device=self.device)
+        self.norm_momentum = norm_momentum
+        self.warmup_steps = warmup_steps
+        self.step_count = 0
+
+        # Stochastic exploration (MATH.md M.6.3b)
+        self.step_frequency = step_frequency
+        self.noise_sigma = noise_sigma
+        self.noise_anneal = noise_anneal
+        self.elastic_gamma = elastic_gamma
+        self.total_steps = total_steps
+        self._last_lambda = None  # cached output for non-update steps
+
+    def _normalize_state(self, s_t: torch.Tensor) -> torch.Tensor:
+        """Z-score normalize s_t using running statistics.
+        During warmup returns raw values (MFs won't be meaningful anyway).
+        After warmup, maps s_t to ~N(0,1) per dimension so MFs calibrated
+        for z-scored space activate properly.
+        """
+        self.step_count += 1
+        beta = self.norm_momentum
+        self.running_mean = beta * self.running_mean + (1 - beta) * s_t.detach()
+        self.running_var = beta * self.running_var + (1 - beta) * (s_t.detach() - self.running_mean) ** 2
+
+        if self.step_count < self.warmup_steps:
+            return s_t  # raw during warmup
+
+        std = (self.running_var + 1e-8).sqrt()
+        return (s_t - self.running_mean) / std
+
     def _evaluate_antecedents(self, s_t: torch.Tensor) -> torch.Tensor:
         """Compute firing strength h_r(s_t) for each rule.
         Ref: MATH.md M.6.3
@@ -42,6 +80,9 @@ class TSFuzzyController:
         Returns:
             h: [7] normalized firing strengths
         """
+        # Normalize to z-score space for calibrated MFs
+        s_t = self._normalize_state(s_t)
+
         L_t = s_t[0]
         delta_L = s_t[1]
         ema_L = s_t[2]
@@ -115,17 +156,42 @@ class TSFuzzyController:
     def step(
         self, s_t: torch.Tensor, lambda_t: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Full controller step: s_t, λ_t → λ_{t+1}.
-        Ref: MATH.md M.3.6: λ_{t+1} = Π_Λ(λ_t + u_t)
+        """Full controller step: s_t, λ_t → λ_{t+1} (MATH.md M.6.3b).
+
+        Applies controller every step_frequency steps. Between updates,
+        returns cached λ. Adds stochastic noise with optional annealing
+        and elastic mean-reversion.
 
         Args:
             s_t: [18] state vector
             lambda_t: [11] current hyperparameters
         Returns:
             lambda_new: [11] updated hyperparameters (projected)
-            u_t: [11] correction
-            h_bar: [7] rule activations
+            u_t: [11] correction (zero if skipped)
+            h_bar: [7] rule activations (zero if skipped)
         """
+        # Skip update if not on step_frequency boundary (after warmup)
+        if self.step_count > self.warmup_steps and self.step_count % self.step_frequency != 0:
+            u_t = torch.zeros(U_DIM, device=s_t.device)
+            h_bar = torch.zeros(7, device=s_t.device)
+            return lambda_t, u_t, h_bar
+
         u_t, h_bar = self.compute_correction(s_t)
-        lambda_new = project_to_bounds(lambda_t + u_t)
+
+        # Add stochastic exploration noise (MATH.md M.6.3b)
+        if self.noise_sigma > 0:
+            if self.noise_anneal:
+                sigma_t = self.noise_sigma * max(0, 1.0 - self.step_count / self.total_steps)
+            else:
+                sigma_t = self.noise_sigma
+            noise = torch.randn_like(u_t) * sigma_t
+            u_t = u_t + noise
+
+        # Elastic step with mean-reversion (MATH.md M.6.3b)
+        lambda_new = elastic_step(
+            lambda_t, u_t,
+            alpha=self.alpha,
+            gamma=self.elastic_gamma,
+        )
+
         return lambda_new, u_t, h_bar

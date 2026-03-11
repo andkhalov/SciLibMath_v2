@@ -154,8 +154,7 @@ class FamilyAEncoder(nn.Module):
 
     Параметры: ~80M
 
-    text_unfreeze_ratio: float — доля верхних слоёв для разморозки
-        (из v_1, см. _unfreeze_top_layers)
+    # All layers trainable (full fine-tuning, M.2.4 DEPRECATED unfreezing)
     """
 
     def forward(self, batch) -> Dict[str, torch.Tensor]:
@@ -264,14 +263,9 @@ def initialize_new_tokens_fvt(base_tokenizer, domain_tokenizer, base_embeddings)
     e_{\\frac} = (e_{\\\\ } + e_{fr} + e_{ac}) / 3
     """
 
-# Стратегия unfreezing (Ref: MATH.md M.2.4)
-UNFREEZING_CONFIG = {
-    'warm_up_steps': 500,           # T_warm: backbone заморожен
-    'partial_unfreeze_steps': 2000, # T_full: top-k% слоёв размораживаются
-    'text_unfreeze_ratio': 0.3,     # top 30% слоёв backbone
-    'lr_embed': 'lr / 10',         # пониженный lr для embedding layer
-    # Мониторинг bottleneck: если variance эмбеддингов lean/latex падает → early stop
-}
+# Стратегия обучения (Ref: MATH.md M.2.4)
+# DEPRECATED: трёхфазный unfreezing убран (SciRus-tiny 3 слоя + FVT = full fine-tuning).
+# Discriminative LR: backbone lr = lr * lr_embed_ratio (default 0.1)
 ```
 
 ---
@@ -557,8 +551,17 @@ class FuzzyTSController:
 
     def update_hyperparams(self, lambda_t, u_t, bounds):
         """
-        λ_{t+1} = Π_Λ(λ_t + u_t)
-        Box constraints projection.
+        Variant D (MATH.md M.6.3b):
+        λ_{t+1} = Π_Λ(λ_t + α·u_t + γ·(λ_0 - λ_t))
+
+        Parameters (from config):
+          alpha: 0.001       # step size (reduced from 0.05)
+          warmup_steps: 200  # raw state for first 200 steps
+          step_frequency: 10 # apply every K=10 steps
+          noise_sigma: 0.01  # stochastic exploration σ_0
+          noise_anneal: true # linear σ decay to 0
+          elastic_gamma: 0.01 # mean-reversion coefficient γ
+          bounds: w_m ∈ [0.3, 3.0] (narrowed from [0.1, 5.0])
         """
 
 class MembershipFunction:
@@ -584,7 +587,11 @@ class LyapunovRegularizer:
     Функция Ляпунова как soft constraint.
 
     V_t = α·L̃_t + β·||Δλ_t||² + γ·Var_m(w_{m,t})
-    L_lyap = λ_lyap · ReLU(V_t - V_{t-1} + η·Ψ_t - ξ)   (MATH.md M.3.7 v2.2)
+
+    # Soft constraint (MATH.md M.7.2b):
+    L_lyap = penalty_weight · max(0, ΔV_t - ξ)
+    # where ΔV_t = V_t - V_{t-1}, ξ = allowable growth threshold (default 0.01)
+    # Penalizes only GROWTH beyond ξ, not absolute V_t value
     """
 
     def __init__(self, alpha=1.0, beta=0.1, gamma=0.1,
@@ -669,10 +676,11 @@ class DownstreamMetrics:
 
 | Метрика | Формула | Для Paper |
 |---|---|---|
-| Centroid R@1 | Top-1 accuracy по центроидам | A, B |
-| Centroid R@10 | Top-10 accuracy | A, B |
-| Direct R@1 (m→m') | Cross-modal top-1 | A, B |
-| Direct R@10 (m→m') | Cross-modal top-10 | A, B |
+| **mean_crossmodal_R@1** | **Mean R@1 across all 20 directed pairs — PRIMARY METRIC** | **A, B, C** |
+| mean_crossmodal_R@{3,10} | Mean R@k across all 20 pairs | A, B |
+| Centroid R@1 (LOO) | Leave-one-out centroid retrieval (NOTE: structurally saturates at ~1.0 due to 4/5 overlap — use as sanity check only) | A, B |
+| Direct R@1 (m→m') | Cross-modal top-1, all M*(M-1)=20 directed pairs | A, B |
+| Direct R@10 (m→m') | Cross-modal top-10, all 20 pairs | A, B |
 | D_intra | Mean intra-object radius | B |
 | D_inter | Mean inter-centroid distance | B |
 | Collapse Score (CS) | 0=healthy, 1=collapsed | B, C |
@@ -733,7 +741,7 @@ model:
   visual_backbone: "resnet18"
   visual_patch_size: 64
   visual_stride: 32          # s = p/2 → overlapping patches (MATH.md M.1.2)
-  text_unfreeze_ratio: 0.3
+  lr_embed_ratio: 0.1  # discriminative LR for backbone
 
 loss:
   variant: "E3"  # E1-E7
@@ -747,19 +755,23 @@ loss:
   lambda_va: 0.1       # visual alignment loss weight (static в E1-E5; dynamic в E6-E7 через fuzzy R6)
   visual_align_margin: 1.0  # δ_va — margin для негативных пар в L_visual_align
 
-# Только для E6/E7:
-fuzzy:
-  n_ctrl_steps: 10  # обновлять каждые 10 шагов
-  ema_beta: 0.9
-  rules: "default"  # или путь к YAML с кастомными правилами
+# Только для E6/E7 (Variant D — MATH.md M.6.3b):
+controller:
+  alpha: 0.001          # step size (reduced from 0.05 — EXP-001 fix)
+  warmup_steps: 200     # raw state during warmup
+  step_frequency: 10    # apply controller every K steps
+  noise_sigma: 0.01     # stochastic exploration σ_0
+  noise_anneal: true    # linear annealing σ_t = σ_0·(1-t/T)
+  elastic_gamma: 0.01   # mean-reversion to λ_0
+  # Bounds: w_m ∈ [0.3, 3.0] (narrowed from [0.1, 5.0])
 
+# Только для E7:
 lyapunov:
   alpha: 1.0
   beta: 0.1
-  gamma: 0.1
-  eta: 0.01
-  xi: 0.001
-  lambda_lyap: 0.1
+  gamma: 0.5
+  penalty_weight: 0.1
+  xi: 0.01             # allowable V growth threshold (M.7.2b)
 
 training:
   epochs: 10

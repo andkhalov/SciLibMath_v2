@@ -1,0 +1,15 @@
+# weep3.yaml — Overrides for weep-3 sweep (50k train, 10k eval, 1 epoch)
+# Total: ~60k objects from 972k dataset
+# Apply via CLI overrides or merge with experiment config.
+
+data:
+  dataset_fraction: 0.0617  # ~60k of 972k → 50k train + 10k test
+  test_fraction: 0.167      # 10k / 60k for retrieval evaluation
+  batch_size: 64
+  num_workers: 8
+
+training:
+  epochs: 1
+
+eval:
+  eval_every_steps: 100
