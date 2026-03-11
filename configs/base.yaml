@@ -45,6 +45,15 @@ model:
   visual_patch_size: 64
   visual_patch_stride: 32
   visual_align_margin: 1.0  # δ_va for visual alignment loss (MATH.md M.1.2*)
+  # EXP-003 visual pipeline fixes
+  align_hidden_dim: 512       # AlignNet hidden layer dimension (Fix P2)
+  align_dropout: 0.1          # AlignNet dropout rate (Fix P2)
+  freeze_resnet_layers: 2     # freeze conv1+bn1+layer1 (1) or +layer2 (2) (Fix P3)
+  lr_visual_ratio: 0.5        # visual pipeline LR = lr × this (vs 0.1 for text) (Fix P3)
+  visual_align_targets:        # modalities for L_visual_align (Fix P4)
+    - latex
+    - en
+    - lean
 
 # --- Training ---
 training:

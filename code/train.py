@@ -223,6 +223,10 @@ def main():
             visual_patch_size=cfg.model.get("visual_patch_size", 64),
             visual_patch_stride=cfg.model.get("visual_patch_stride", 32),
             visual_align_margin=va_margin,
+            visual_align_targets=list(cfg.model.get("visual_align_targets", ["latex"])),
+            align_hidden_dim=cfg.model.get("align_hidden_dim", 512),
+            align_dropout=cfg.model.get("align_dropout", 0.1),
+            freeze_resnet_layers=cfg.model.get("freeze_resnet_layers", 2),
             shared_vocab_size=shared_vocab_size,
         ).to(device)
         # FVT init for shared encoder (all new tokens)
@@ -242,6 +246,10 @@ def main():
             visual_patch_size=cfg.model.get("visual_patch_size", 64),
             visual_patch_stride=cfg.model.get("visual_patch_stride", 32),
             visual_align_margin=va_margin,
+            visual_align_targets=list(cfg.model.get("visual_align_targets", ["latex"])),
+            align_hidden_dim=cfg.model.get("align_hidden_dim", 512),
+            align_dropout=cfg.model.get("align_dropout", 0.1),
+            freeze_resnet_layers=cfg.model.get("freeze_resnet_layers", 2),
             lean_vocab_size=_lean_vs,
             latex_vocab_size=_latex_vs,
         ).to(device)
@@ -304,6 +312,7 @@ def main():
     param_groups = model.get_param_groups(
         lr=cfg.training.lr,
         lr_embed_ratio=cfg.model.get("lr_embed_ratio", 0.1),
+        lr_visual_ratio=cfg.model.get("lr_visual_ratio", 0.5),
     )
     if mixer:
         param_groups.append({"params": mixer.parameters(), "lr": cfg.training.lr})

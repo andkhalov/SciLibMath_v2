@@ -79,10 +79,14 @@ class VisualEncoder(nn.Module):
         pretrained: bool = True,
         patch_size: int = 64,
         patch_stride: int = 32,
+        align_hidden_dim: int = 512,
+        align_dropout: float = 0.1,
+        freeze_resnet_layers: int = 2,
     ):
         super().__init__()
         self.patch_size = patch_size
         self.patch_stride = patch_stride
+        self.freeze_resnet_layers = freeze_resnet_layers
 
         # --- Step 2: ResNet18 feature extractor (no FC, no avgpool) ---
         weights = "DEFAULT" if pretrained else None
@@ -109,13 +113,26 @@ class VisualEncoder(nn.Module):
         self.resnet_layer4 = resnet.layer4
         self.resnet_pool = nn.AdaptiveAvgPool2d((1, 1))
 
+        # Freeze early ResNet layers (EXP-003 Fix P3)
+        if freeze_resnet_layers >= 1:
+            for m in [self.resnet_conv1, self.resnet_bn1, self.resnet_layer1]:
+                for p in m.parameters():
+                    p.requires_grad = False
+        if freeze_resnet_layers >= 2:
+            for p in self.resnet_layer2.parameters():
+                p.requires_grad = False
+
         # --- Step 3: AlignNet — MATH.md M.1.2 Step 3 ---
-        # Load text backbone to get d_text
+        # Deeper MLP with GELU nonlinearity (EXP-003 Fix P2)
         text_backbone = AutoModel.from_pretrained(text_backbone_name)
         d_text = text_backbone.config.hidden_size  # 312 for sci-rus-tiny
 
         self.align_net = nn.Sequential(
-            nn.Linear(resnet_out_dim, d_text),
+            nn.Linear(resnet_out_dim, align_hidden_dim),
+            nn.GELU(),
+            nn.LayerNorm(align_hidden_dim),
+            nn.Dropout(align_dropout),
+            nn.Linear(align_hidden_dim, d_text),
             nn.LayerNorm(d_text),
         )
 

@@ -35,10 +35,15 @@ class FamilyA(nn.Module):
         visual_patch_size: int = 64,
         visual_patch_stride: int = 32,
         visual_align_margin: float = 1.0,
+        visual_align_targets: list[str] | None = None,
+        align_hidden_dim: int = 512,
+        align_dropout: float = 0.1,
+        freeze_resnet_layers: int = 2,
         lean_vocab_size: int | None = None,
         latex_vocab_size: int | None = None,
     ):
         super().__init__()
+        self.visual_align_targets = visual_align_targets or ["latex"]
 
         # Text encoders (MATH.md M.1), with optional vocab extension (M.2.3)
         _vocab_sizes = {"lean": lean_vocab_size, "latex": latex_vocab_size}
@@ -49,13 +54,16 @@ class FamilyA(nn.Module):
                 vocab_size=_vocab_sizes.get(mod),
             )
 
-        # Visual encoder (MATH.md M.1.2)
+        # Visual encoder (MATH.md M.1.2) with deeper AlignNet + freeze (EXP-003)
         self.visual_encoder = VisualEncoder(
             text_backbone_name=text_backbone,
             resnet_name=visual_backbone,
             pretrained=visual_pretrained,
             patch_size=visual_patch_size,
             patch_stride=visual_patch_stride,
+            align_hidden_dim=align_hidden_dim,
+            align_dropout=align_dropout,
+            freeze_resnet_layers=freeze_resnet_layers,
         )
 
         # Projection heads: Linear(d', d) per MATH.md M.1.1
@@ -130,24 +138,23 @@ class FamilyA(nn.Module):
         centroid = emb_stack.mean(dim=0)  # [B, d] UNNORMALIZED
         centroid_norm = F.normalize(centroid, dim=-1)  # [B, d] normalized
 
-        # Visual alignment loss (MATH.md M.1.2*)
+        # Visual alignment loss (MATH.md M.1.2*) — multi-target (EXP-003 Fix P4)
         # visual_pooled: already computed above (mean-pooled AlignNet output)
-        # latex_pooled: mean-pooled token embeddings from LaTeX encoder
-        latex_ids = batch["latex_input_ids"]
-        latex_mask = batch["latex_attention_mask"]
-        latex_embed_layer = self.text_encoders["latex"].get_embedding_layer()
-        if latex_embed_layer is not None:
-            with torch.no_grad():
-                latex_token_embs = latex_embed_layer(latex_ids)  # [B, L, d_text]
-            # Masked mean pool
-            mask_exp = latex_mask.unsqueeze(-1).float()
-            latex_pooled = (latex_token_embs * mask_exp).sum(dim=1) / mask_exp.sum(dim=1).clamp(min=1e-9)
-        else:
-            # Fallback: use full encoder output (detached)
-            with torch.no_grad():
-                latex_pooled = self.text_encoders["latex"](latex_ids, latex_mask)
-
-        va_loss = self.visual_align_loss_fn(visual_pooled, latex_pooled.detach())
+        va_loss = torch.tensor(0.0, device=visual_pooled.device)
+        for target_mod in self.visual_align_targets:
+            t_ids = batch[f"{target_mod}_input_ids"]
+            t_mask = batch[f"{target_mod}_attention_mask"]
+            t_embed_layer = self.text_encoders[target_mod].get_embedding_layer()
+            if t_embed_layer is not None:
+                with torch.no_grad():
+                    t_token_embs = t_embed_layer(t_ids)  # [B, L, d_text]
+                mask_exp = t_mask.unsqueeze(-1).float()
+                t_pooled = (t_token_embs * mask_exp).sum(dim=1) / mask_exp.sum(dim=1).clamp(min=1e-9)
+            else:
+                with torch.no_grad():
+                    t_pooled = self.text_encoders[target_mod](t_ids, t_mask)
+            va_loss = va_loss + self.visual_align_loss_fn(visual_pooled, t_pooled.detach())
+        va_loss = va_loss / len(self.visual_align_targets)
 
         return {
             "embeddings": embeddings,
@@ -156,31 +163,38 @@ class FamilyA(nn.Module):
             "visual_align_loss": va_loss,
         }
 
-    def get_param_groups(self, lr: float, lr_embed_ratio: float = 0.1):
+    def get_param_groups(self, lr: float, lr_embed_ratio: float = 0.1,
+                         lr_visual_ratio: float = 0.5):
         """Parameter groups with discriminative learning rates (MATH.md M.2.4).
 
-        Returns list of param groups for optimizer.
+        Three groups (EXP-003 Fix P3):
+          0: text backbones — lr × lr_embed_ratio (0.1)
+          1: visual pipeline (unfrozen ResNet + AlignNet + transformer) — lr × lr_visual_ratio (0.5)
+          2: projection heads — lr (full)
         """
-        # Backbone params (lower lr) — text encoder backbones + visual encoder backbones
-        backbone_params = []
+        # Group 0: text encoder backbones
+        text_backbone_params = []
         for mod in TEXT_MODALITIES:
-            backbone_params.extend(self.text_encoders[mod].backbone.parameters())
-        # Visual encoder: ResNet + SciRus-tiny transformer
-        backbone_params.extend(self.visual_encoder.parameters())
+            text_backbone_params.extend(self.text_encoders[mod].backbone.parameters())
+        text_backbone_ids = {id(p) for p in text_backbone_params}
 
-        # Exclude AlignNet and projection params that are already in backbone_params
-        backbone_ids = {id(p) for p in backbone_params}
+        # Group 1: visual encoder (only trainable params — frozen layers excluded)
+        visual_params = [p for p in self.visual_encoder.parameters() if p.requires_grad]
+        visual_ids = {id(p) for p in visual_params}
 
-        # Projection head params (full lr)
+        # Group 2: projection heads
         head_params = []
         for proj in self.projections.values():
             head_params.extend(proj.parameters())
-
-        # Filter out any overlap
         head_ids = {id(p) for p in head_params}
-        backbone_params = [p for p in backbone_params if id(p) not in head_ids]
+
+        # Remove overlaps
+        text_backbone_params = [p for p in text_backbone_params
+                                if id(p) not in head_ids and id(p) not in visual_ids]
+        visual_params = [p for p in visual_params if id(p) not in head_ids]
 
         return [
-            {"params": backbone_params, "lr": lr * lr_embed_ratio},
+            {"params": text_backbone_params, "lr": lr * lr_embed_ratio},
+            {"params": visual_params, "lr": lr * lr_visual_ratio},
             {"params": head_params, "lr": lr},
         ]

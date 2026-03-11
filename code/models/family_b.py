@@ -40,9 +40,14 @@ class FamilyB(nn.Module):
         visual_patch_size: int = 64,
         visual_patch_stride: int = 32,
         visual_align_margin: float = 1.0,
+        visual_align_targets: list[str] | None = None,
+        align_hidden_dim: int = 512,
+        align_dropout: float = 0.1,
+        freeze_resnet_layers: int = 2,
         shared_vocab_size: int | None = None,
     ):
         super().__init__()
+        self.visual_align_targets = visual_align_targets or ["latex"]
 
         # 1 shared text encoder for all 4 text modalities (MATH.md M.1.3)
         self.text_encoder = TextEncoder(
@@ -50,13 +55,16 @@ class FamilyB(nn.Module):
             vocab_size=shared_vocab_size,
         )
 
-        # Visual encoder (identical to Family A, MATH.md M.1.2)
+        # Visual encoder (identical to Family A, MATH.md M.1.2) with EXP-003 fixes
         self.visual_encoder = VisualEncoder(
             text_backbone_name=text_backbone,
             resnet_name=visual_backbone,
             pretrained=visual_pretrained,
             patch_size=visual_patch_size,
             patch_stride=visual_patch_stride,
+            align_hidden_dim=align_hidden_dim,
+            align_dropout=align_dropout,
+            freeze_resnet_layers=freeze_resnet_layers,
         )
 
         # 2 projection heads: symbolic and visual
@@ -124,20 +132,22 @@ class FamilyB(nn.Module):
         centroid = emb_stack.mean(dim=0)  # [B, d]
         centroid_norm = F.normalize(centroid, dim=-1)
 
-        # Visual alignment loss (MATH.md M.1.2*)
-        latex_ids = batch["latex_input_ids"]
-        latex_mask = batch["latex_attention_mask"]
-        latex_embed_layer = self.text_encoder.get_embedding_layer()
-        if latex_embed_layer is not None:
-            with torch.no_grad():
-                latex_token_embs = latex_embed_layer(latex_ids)  # [B, L, d_text]
-            mask_exp = latex_mask.unsqueeze(-1).float()
-            latex_pooled = (latex_token_embs * mask_exp).sum(dim=1) / mask_exp.sum(dim=1).clamp(min=1e-9)
-        else:
-            with torch.no_grad():
-                latex_pooled = self.text_encoder(latex_ids, latex_mask)
-
-        va_loss = self.visual_align_loss_fn(visual_pooled, latex_pooled.detach())
+        # Visual alignment loss (MATH.md M.1.2*) — multi-target (EXP-003 Fix P4)
+        va_loss = torch.tensor(0.0, device=visual_pooled.device)
+        for target_mod in self.visual_align_targets:
+            t_ids = batch[f"{target_mod}_input_ids"]
+            t_mask = batch[f"{target_mod}_attention_mask"]
+            t_embed_layer = self.text_encoder.get_embedding_layer()
+            if t_embed_layer is not None:
+                with torch.no_grad():
+                    t_token_embs = t_embed_layer(t_ids)  # [B, L, d_text]
+                mask_exp = t_mask.unsqueeze(-1).float()
+                t_pooled = (t_token_embs * mask_exp).sum(dim=1) / mask_exp.sum(dim=1).clamp(min=1e-9)
+            else:
+                with torch.no_grad():
+                    t_pooled = self.text_encoder(t_ids, t_mask)
+            va_loss = va_loss + self.visual_align_loss_fn(visual_pooled, t_pooled.detach())
+        va_loss = va_loss / len(self.visual_align_targets)
 
         return {
             "embeddings": embeddings,
@@ -146,18 +156,34 @@ class FamilyB(nn.Module):
             "visual_align_loss": va_loss,
         }
 
-    def get_param_groups(self, lr: float, lr_embed_ratio: float = 0.1):
-        """Parameter groups with discriminative learning rates (MATH.md M.2.4)."""
-        # Backbone params (lower lr)
-        backbone_params = list(self.text_encoder.backbone.parameters())
-        backbone_params.extend(self.visual_encoder.parameters())
-        backbone_ids = {id(p) for p in backbone_params}
+    def get_param_groups(self, lr: float, lr_embed_ratio: float = 0.1,
+                         lr_visual_ratio: float = 0.5):
+        """Parameter groups with discriminative learning rates (MATH.md M.2.4).
 
-        # Projection head params (full lr)
+        Three groups (EXP-003 Fix P3):
+          0: text backbone — lr × lr_embed_ratio (0.1)
+          1: visual pipeline (unfrozen ResNet + AlignNet + transformer) — lr × lr_visual_ratio (0.5)
+          2: projection heads — lr (full)
+        """
+        # Group 0: text encoder backbone
+        text_backbone_params = list(self.text_encoder.backbone.parameters())
+        text_backbone_ids = {id(p) for p in text_backbone_params}
+
+        # Group 1: visual encoder (only trainable params)
+        visual_params = [p for p in self.visual_encoder.parameters() if p.requires_grad]
+        visual_ids = {id(p) for p in visual_params}
+
+        # Group 2: projection heads
         head_params = list(self.proj_sym.parameters()) + list(self.proj_img.parameters())
-        head_params = [p for p in head_params if id(p) not in backbone_ids]
+        head_ids = {id(p) for p in head_params}
+
+        # Remove overlaps
+        text_backbone_params = [p for p in text_backbone_params
+                                if id(p) not in head_ids and id(p) not in visual_ids]
+        visual_params = [p for p in visual_params if id(p) not in head_ids]
 
         return [
-            {"params": backbone_params, "lr": lr * lr_embed_ratio},
+            {"params": text_backbone_params, "lr": lr * lr_embed_ratio},
+            {"params": visual_params, "lr": lr * lr_visual_ratio},
             {"params": head_params, "lr": lr},
         ]

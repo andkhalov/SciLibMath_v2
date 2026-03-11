@@ -15,7 +15,7 @@ def get_image_transform(target_height: int = 64, max_width: int = 512):
     return transforms.Compose([
         transforms.Grayscale(num_output_channels=1),
         transforms.ToTensor(),  # [1, H, W], values in [0, 1]
-        transforms.Normalize(mean=[0.5], std=[0.5]),  # → [-1, 1]
+        transforms.Normalize(mean=[0.449], std=[0.226]),  # grayscale ImageNet stats
     ])
 
 
