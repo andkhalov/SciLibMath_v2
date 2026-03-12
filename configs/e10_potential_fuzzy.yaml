@@ -1,0 +1,37 @@
+# E10: Potential Loss + Fuzzy T-S controller
+# Ref: MATH.md M.3.10
+# Like E6, but L_potential replaces L_align + L_rad.
+# Controller manages: [τ, k_a, k_r, λ_reg, λ_va, w_en, ..., w_g]
+experiment: e10_potential_fuzzy
+
+loss:
+  type: composite
+  tau: 0.07
+  p_drop: 0.3
+  lambda_reg: 0.05
+  lambda_va: 0.1
+  w_g: 1.0
+  C_clip: 10.0
+  rho: 0.1               # unused (potential loss replaces radial)
+  alpha_tau: 0.5
+  tau_target: 0.0
+  tau_min: 0.01
+  tau_max: 0.5
+  # Potential loss params (MATH.md M.3.9)
+  use_potential: true
+  k_a: 1.0               # harmonic attraction strength
+  k_r: 0.1               # log-barrier repulsion strength
+  weights:
+    en: 1.0
+    ru: 1.0
+    lean: 1.5
+    latex: 1.5
+    img: 1.0
+
+controller:
+  alpha: 0.001
+  warmup_steps: 200
+  step_frequency: 10
+  noise_sigma: 0.01
+  noise_anneal: true
+  elastic_gamma: 0.01

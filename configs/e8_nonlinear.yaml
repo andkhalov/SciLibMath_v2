@@ -1,0 +1,36 @@
+# E8: Composite loss + Fuzzy T-S controller with NONLINEAR consequents
+# Ref: MATH.md M.3.8
+# Like E6, but THEN-part of rules = MLP φ_r(s_t) instead of A_r·s_t + b_r
+experiment: e8_nonlinear
+
+loss:
+  type: composite
+  tau: 0.07
+  p_drop: 0.3
+  lambda_align: 0.3
+  lambda_rad: 0.1
+  lambda_reg: 0.05
+  lambda_va: 0.1
+  w_g: 1.0
+  C_clip: 10.0
+  rho: 0.1
+  alpha_tau: 0.5
+  tau_target: 0.0
+  tau_min: 0.01
+  tau_max: 0.5
+  weights:
+    en: 1.0
+    ru: 1.0
+    lean: 1.5
+    latex: 1.5
+    img: 1.0
+
+controller:
+  alpha: 0.001
+  warmup_steps: 200
+  step_frequency: 10
+  noise_sigma: 0.01
+  noise_anneal: true
+  elastic_gamma: 0.01
+  nonlinear_consequents: true   # E8: MLP per rule
+  consequent_hidden: 32         # hidden dim for φ_r MLP

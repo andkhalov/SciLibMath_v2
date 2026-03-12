@@ -500,6 +500,44 @@ def centroid_infonce(embeddings, tau=0.1, p_drop=0.3):
 # Ref: MATH.md M.3.7, M.7
 ```
 
+### 6.7 E8: Nonlinear T-S controller
+
+```python
+# src/controller/rules.py — NonlinearConsequent class
+# src/controller/ts_controller.py — nonlinear_consequents=True option
+# Ref: MATH.md M.3.8
+
+# E8 = E6 but with MLP consequents instead of linear A_r·s_t + b_r.
+# φ_r(s_t) = W2·ReLU(W1·s_t + b1) + b2, per rule.
+# Antecedents (MF, t-norm, normalization) unchanged.
+# Config: controller.nonlinear_consequents=true, controller.consequent_hidden=32
+```
+
+### 6.8 E9: Potential Loss + LossMixer
+
+```python
+# src/losses/potential.py — PotentialLoss class
+# Ref: MATH.md M.3.9
+
+# L_potential = k_a · attract + k_r · repel
+# attract = (1/NM) Σ_i Σ_m ||e_m^i - c_i||²  (harmonic)
+# repel = -(1/C(N,2)) Σ_{i<j} log(||c_i - c_j|| + ε)  (log-barrier)
+# Replaces L_align + L_rad in composite loss.
+# E9 = L_contrast(E2) + L_potential + L_ac + LossMixer (E5 style)
+# Config: loss.use_potential=true, loss.k_a=1.0, loss.k_r=0.1
+```
+
+### 6.9 E10: Potential Loss + Fuzzy controller
+
+```python
+# Ref: MATH.md M.3.10
+
+# E10 = L_contrast(E2) + L_potential + L_ac + L_va + fuzzy controller
+# Same as E6, but L_potential replaces L_align + L_rad.
+# Controller manages: [τ, k_a, k_r, λ_reg, λ_va, w_en, ..., w_g]
+# Config: loss.use_potential=true + controller section
+```
+
 ---
 
 ## 7. Fuzzy Controller: реализация T-S [Paper C]

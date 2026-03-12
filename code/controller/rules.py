@@ -15,6 +15,7 @@ Each rule r: u_t^r = A_r · s_t + b_r
 """
 
 import torch
+import torch.nn as nn
 
 # State vector indices (MATH.md M.6.3*)
 # Group 1 (aggregate): L_t(0), ΔL(1), EMA_L(2), Var_m(3), collapse(4), ΔL_align(5), ΔL_reg(6), grad_conflict(7)
@@ -139,6 +140,51 @@ def project_to_bounds(lam: torch.Tensor, bounds: torch.Tensor = None) -> torch.T
     if bounds is None:
         bounds = LAMBDA_BOUNDS.to(lam.device)
     return torch.clamp(lam, min=bounds[:, 0], max=bounds[:, 1])
+
+
+class NonlinearConsequent(nn.Module):
+    """MLP consequent for T-S rule: φ_r(s_t) = W2·ReLU(W1·s_t + b1) + b2.
+    Ref: MATH.md M.3.8
+
+    Replaces linear A_r·s_t + b_r with a learnable nonlinear function.
+    Initialized near zero so initial behavior matches E6.
+    """
+
+    def __init__(self, s_dim: int = S_DIM, u_dim: int = U_DIM, hidden: int = 32):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(s_dim, hidden),
+            nn.ReLU(),
+            nn.Linear(hidden, u_dim),
+        )
+        # Initialize near zero — matches E6 behavior at start
+        with torch.no_grad():
+            self.net[-1].weight.mul_(0.01)
+            self.net[-1].bias.zero_()
+
+    def forward(self, s_t: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            s_t: [s_dim] state vector
+        Returns:
+            u_r: [u_dim] consequent output
+        """
+        return self.net(s_t)
+
+
+def build_nonlinear_rules(
+    n_rules: int = 7, s_dim: int = S_DIM, u_dim: int = U_DIM, hidden: int = 32,
+) -> nn.ModuleList:
+    """Build NonlinearConsequent modules for each rule.
+    Ref: MATH.md M.3.8
+
+    Returns:
+        nn.ModuleList of NonlinearConsequent modules
+    """
+    return nn.ModuleList([
+        NonlinearConsequent(s_dim=s_dim, u_dim=u_dim, hidden=hidden)
+        for _ in range(n_rules)
+    ])
 
 
 def elastic_step(

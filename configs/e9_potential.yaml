@@ -1,0 +1,25 @@
+# E9: Potential Loss + LossMixer (learnable W)
+# Ref: MATH.md M.3.9
+# Replaces L_align + L_rad with force-based L_potential = U_attract + U_repel.
+# Uses LossMixer (E5-style) for weight adaptation.
+experiment: e9_potential
+
+loss:
+  type: composite
+  tau: 0.07
+  p_drop: 0.3
+  lambda_reg: 0.05
+  lambda_va: 0.1
+  C_clip: 10.0
+  rho: 0.1               # unused (potential loss replaces radial)
+  alpha_tau: 0.5
+  tau_target: 0.0
+  tau_min: 0.01
+  tau_max: 0.5
+  # Potential loss params (MATH.md M.3.9)
+  use_potential: true
+  k_a: 1.0               # harmonic attraction strength
+  k_r: 0.1               # log-barrier repulsion strength
+
+mixer:
+  hidden_dim: 64

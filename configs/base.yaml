@@ -1,6 +1,6 @@
 # base.yaml — SciLibMath_v2 common configuration
 # All experiment configs inherit from this via OmegaConf merge.
-# Ref: writing/MATH.md v2.6.2, writing/TZ.md v1.6
+# Ref: writing/MATH.md v2.7, writing/TZ.md v1.7
 
 seed: 42
 device: cuda

@@ -553,6 +553,82 @@ $V_t$ — функция Ляпунова (M.7), $V_{t-1}$ — её значен
 
 **Цель ablation E6 vs E7:** разделить вклад fuzzy (E6) и Lyapunov (E7). Если $E7 \gg E6$ по метрикам — Lyapunov критически важен. Если $E7 \approx E6$ — Lyapunov декоративен.
 
+### M.3.8 E8: Нелинейные консеквенты (Nonlinear T-S) [Paper C]
+
+**[Определение M.3.8]**
+
+$$\mathcal{L}_{E8} = \mathcal{L}_{E6} \text{ с заменой линейных консеквентов на нелинейные}$$
+
+В E6 каждое правило $r$ имеет линейный консеквент: $\mathbf{u}_t^r = A_r \cdot \mathbf{s}_t + \mathbf{b}_r$. В E8 линейная модель заменяется MLP per rule:
+
+$$\mathbf{u}_t^r = \varphi_r(\mathbf{s}_t)$$
+
+где $\varphi_r: \mathbb{R}^{18} \to \mathbb{R}^{11}$ — двуслойный MLP:
+
+$$\varphi_r(\mathbf{s}_t) = W_2^r \cdot \text{ReLU}(W_1^r \cdot \mathbf{s}_t + \mathbf{b}_1^r) + \mathbf{b}_2^r$$
+
+$$W_1^r \in \mathbb{R}^{h \times 18}, \quad W_2^r \in \mathbb{R}^{11 \times h}, \quad h = 32$$
+
+Fuzzy антецеденты (MF, product t-norm, нормализация) — без изменений относительно E6:
+
+$$\mathbf{u}_t = \sum_r \bar{h}_r(\mathbf{s}_t) \cdot \varphi_r(\mathbf{s}_t)$$
+
+**[Интуиция]** Линейные консеквенты при $\alpha=0.001$ дают слишком малые корректировки — контроллер упирается в границы $\Lambda$ почти сразу. Нелинейные MLP могут адаптивно масштабировать корректировку в зависимости от величины $\mathbf{s}_t$. Параметры $\varphi_r$ обучаются через backprop (градиенты текут через $\mathcal{L}_{\text{lyap}}$).
+
+**[Связь с M.3.6]** Антецеденты (IF-часть) остаются экспертными; изменяются только консеквенты (THEN-часть). Это сохраняет интерпретируемость правил при увеличении выразительности выхода.
+
+**[Assumption required]** [A.1] (нормализация), [A.2] (полный батч). Дополнительно: MLP-консеквенты инициализируются близко к нулю, чтобы в начале обучения поведение совпадало с E6 ($\varphi_r \approx 0$).
+
+### M.3.9 E9: Потенциальные функции (Potential Loss) + learnable W [Paper B]
+
+**[Определение M.3.9]**
+
+Замена $\mathcal{L}_{\text{align}} + \mathcal{L}_{\text{rad}}$ на единый потенциальный лосс, мотивированный аналогией с молекулярной динамикой:
+
+$$\mathcal{L}_{\text{potential}} = U_{\text{attract}} + U_{\text{repel}}$$
+
+**Притяжение к центроиду** (гармонический потенциал):
+
+$$U_{\text{attract}} = \frac{k_a}{NM} \sum_{i=1}^N \sum_{m=1}^M \|e_m^i - c_i\|^2$$
+
+**Отталкивание центроидов** (логарифмический барьер):
+
+$$U_{\text{repel}} = -\frac{k_r}{\binom{N}{2}} \sum_{i < j} \log(\|c_i - c_j\| + \varepsilon)$$
+
+где:
+- $k_a > 0$ — жёсткость притяжения (скаляр, рекомендовано: 1.0)
+- $k_r > 0$ — сила отталкивания (скаляр, рекомендовано: 0.1)
+- $\varepsilon > 0$ — предотвращение $\log(0)$ (рекомендовано: $10^{-6}$)
+
+**[Свойства]**
+
+- **Force-based:** сила $\propto$ расстоянию (не threshold-based как $\mathcal{L}_{\text{rad}}$)
+- Притяжение: $F_{\text{attract}} = -\nabla_{e_m^i} U_{\text{attract}} = -2k_a(e_m^i - c_i)$ — сильнее для далёких модальностей
+- Отталкивание: $F_{\text{repel}} \propto -1/(\|c_i - c_j\| + \varepsilon)$ — сильнее для близких объектов
+- Нет жёсткого порога $\rho$ (проблема: $\rho=0.1$ давал $D_{\text{intra}}=0.007$, 14× ниже цели)
+
+**[Полный лосс E9]**
+
+$$\mathcal{L}_{E9} = \mathcal{L}_{\text{contrast}}^{E2} + \mathcal{L}_{\text{potential}} + \lambda_{\text{reg}} \cdot \mathcal{L}_{\text{ac}} + \text{LossMixer}(\text{components})$$
+
+E9 использует LossMixer (как E5) для обучения весов $W$ через backprop. $k_a$ и $k_r$ заменяют $\lambda_{\text{align}}$ и $\lambda_{\text{rad}}$ в векторе $\boldsymbol{\lambda}_t$.
+
+**[Интуиция]** $\mathcal{L}_{\text{align}} + \mathcal{L}_{\text{rad}}$ имели проблему: $\mathcal{L}_{\text{rad}} = (\|e-c\| - \rho)^2$ с $\rho=0.1$ вызывал over-compression ($D_{\text{intra}} \ll \rho$). Потенциальный лосс не имеет фиксированного целевого радиуса — равновесие определяется балансом сил притяжения и отталкивания.
+
+### M.3.10 E10: Потенциальные функции + Fuzzy controller [Paper C]
+
+**[Определение M.3.10]**
+
+$$\mathcal{L}_{E10} = \mathcal{L}_{\text{contrast}}^{E2} + \mathcal{L}_{\text{potential}} + \lambda_{\text{reg}} \cdot \mathcal{L}_{\text{ac}} + \lambda_{\text{va}} \cdot \mathcal{L}_{\text{va}}$$
+
+Как E6, но с $\mathcal{L}_{\text{potential}}$ вместо $\mathcal{L}_{\text{align}} + \mathcal{L}_{\text{rad}}$.
+
+Контроллер управляет вектором $\boldsymbol{\lambda}_t$, в котором $k_a$ и $k_r$ заменяют $\lambda_{\text{align}}$ и $\lambda_{\text{rad}}$:
+
+$$\boldsymbol{\lambda}_t = [\tau, k_a, k_r, \lambda_{\text{reg}}, \lambda_{\text{va}}, w_{\text{en}}, w_{\text{ru}}, w_{\text{lean}}, w_{\text{latex}}, w_{\text{img}}, w_g] \in \mathbb{R}^{11}$$
+
+**[Цель ablation E9 vs E10]** Если E10 > E9, fuzzy controller улучшает потенциальный подход. Если E10 ≈ E9, learnable W достаточно для potential loss.
+
 ---
 
 ## Блок M.4 — Матрица весов и её эволюция [Paper B/C]
@@ -563,8 +639,11 @@ $V_t$ — функция Ляпунова (M.7), $V_{t-1}$ — её значен
 |---|---|---|
 | E4 | Статический | $\boldsymbol{\lambda} = \text{const}$ |
 | E5 | Backprop | $W = \text{LossMixer}(\text{comp\_matrix})$ |
-| E6 | Fuzzy | $\boldsymbol{\lambda}_{t+1} = \Pi_\Lambda(\boldsymbol{\lambda}_t + \mathbf{u}_t)$ |
+| E6 | Fuzzy (linear) | $\boldsymbol{\lambda}_{t+1} = \Pi_\Lambda(\boldsymbol{\lambda}_t + \mathbf{u}_t)$, $\mathbf{u}_t^r = A_r \cdot \mathbf{s}_t + \mathbf{b}_r$ |
 | E7 | Fuzzy + Lyapunov | как E6, $+ \mathcal{L}_{\text{lyap}}$ в лоссе |
+| E8 | Fuzzy (nonlinear) | как E6, $\mathbf{u}_t^r = \varphi_r(\mathbf{s}_t)$ (MLP per rule) |
+| E9 | Potential + Backprop | $\mathcal{L}_{\text{potential}}$ + LossMixer |
+| E10 | Potential + Fuzzy | $\mathcal{L}_{\text{potential}}$ + fuzzy controller |
 
 Проекция $\Pi_\Lambda$:
 

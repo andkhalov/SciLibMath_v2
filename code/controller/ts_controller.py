@@ -11,7 +11,10 @@ from .membership import (
     loss_variable, trend_variable, variance_variable, collapse_variable,
     FuzzyVariable,
 )
-from .rules import build_rule_matrices, project_to_bounds, elastic_step, U_DIM, LAMBDA_DEFAULT
+from .rules import (
+    build_rule_matrices, build_nonlinear_rules, project_to_bounds, elastic_step,
+    U_DIM, LAMBDA_DEFAULT,
+)
 
 
 class TSFuzzyController:
@@ -26,14 +29,25 @@ class TSFuzzyController:
                  warmup_steps: int = 200, norm_momentum: float = 0.99,
                  step_frequency: int = 10, noise_sigma: float = 0.01,
                  noise_anneal: bool = True, elastic_gamma: float = 0.01,
-                 total_steps: int = 10000):
+                 total_steps: int = 10000,
+                 nonlinear_consequents: bool = False,
+                 consequent_hidden: int = 32):
         self.device = device or torch.device("cpu")
         self.alpha = alpha
+        self.nonlinear_consequents = nonlinear_consequents
+
         # Build rules with alpha=1.0 (scaling handled in elastic_step)
         self.rules = build_rule_matrices(alpha=1.0)
 
         # Move to device
         self.rules = [(A.to(self.device), b.to(self.device)) for A, b in self.rules]
+
+        # E8: Nonlinear MLP consequents (MATH.md M.3.8)
+        self.nl_consequents = None
+        if nonlinear_consequents:
+            self.nl_consequents = build_nonlinear_rules(
+                n_rules=len(self.rules), hidden=consequent_hidden,
+            ).to(self.device)
 
         # Linguistic variables for antecedent evaluation
         self.lv_loss = loss_variable("L")
@@ -148,7 +162,10 @@ class TSFuzzyController:
         u_t = torch.zeros(U_DIM, device=s_t.device)
 
         for r, (A_r, b_r) in enumerate(self.rules):
-            consequent = A_r @ s_t + b_r  # [11]
+            if self.nl_consequents is not None:
+                consequent = self.nl_consequents[r](s_t)  # [11] MLP (MATH.md M.3.8)
+            else:
+                consequent = A_r @ s_t + b_r  # [11] linear
             u_t = u_t + h_bar[r] * consequent
 
         return u_t, h_bar

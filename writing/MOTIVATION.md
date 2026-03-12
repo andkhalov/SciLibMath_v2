@@ -1,6 +1,6 @@
 # MOTIVATION.md — Мотивация проекта SciLibMath_v2
 
-> **Версия:** 1.4 | **Фаза:** 1 | **Дата:** 2026-03-08
+> **Версия:** 1.5 | **Фаза:** 1 | **Дата:** 2026-03-12
 > **Papers:** A, B, C (см. раздел 6)
 
 ---
@@ -201,7 +201,7 @@ MathLib4 содержит 200,000+ формализованных утвержд
 | Датасет | SciLibModal (~120K) | SciLibModal_v2 (~1M, +MathLib4 через Jixia + LLM-аугментация) |
 | Визуальная модальность | ViT, фиксированный $224 \times 224$ | Overlapping ResNet patches (stride $32$, patch $64$) $\to$ AlignNet $\to$ SciRus-tiny $\to$ mean pooling, переменная длина + $\mathcal{L}_{\text{visual\_align}}$ |
 | Токенизаторы | generic для всех | Обученные для Lean и LaTeX из корпуса SciLibModal_v2 |
-| Loss ablation | один вариант | E1-E7 (7 экспериментов, от baseline до fuzzy+Lyapunov) |
+| Loss ablation | один вариант | E1-E10 (10 экспериментов, от baseline до nonlinear T-S + potential loss) |
 | Управление весами | LossMixer (backprop, непрозрачный) | T-S fuzzy controller (символьный, структурно интерпретируемый; интерпретируемость верифицируется эмпирически через E6/E7) |
 | Архитектура | Family A (5 энкодеров) | Family A + Family B (ablation) |
 | Стабильность | не контролируется | Lyapunov regularizer |
@@ -230,11 +230,11 @@ Venue: ICLR, ICML, NeurIPS (основная конференция по ML-ме
 ### Paper C: Neuro-Symbolic Control
 **"Neuro-Symbolic Hyperparameter Control via T-S Fuzzy Systems and Lyapunov Stability Constraints"**
 
-Содержание: T-S fuzzy controller для управления гиперпараметрами, функция Ляпунова как regularizer, ablation E6-E7 vs E5, анализ stability, variance reduction, modality balance.
+Содержание: T-S fuzzy controller для управления гиперпараметрами, функция Ляпунова как regularizer, нелинейные консеквенты (E8), потенциальные функции + fuzzy (E10), ablation E6-E10 vs E5, анализ stability, variance reduction, modality balance.
 
 Venue: IEEE Transactions on Fuzzy Systems, FUZZ-IEEE, NeurIPS workshop on neuro-symbolic AI.
 
-**[Замечание о стратегии публикаций]** Три статьи — это план-максимум. Минимально жизнеспособная публикация: объединение Papers A+B в одну работу ("SciLibModal_v2 + Centroid-Based Contrastive Learning for Mathematical Objects"). Paper C публикуется отдельно только если E6/E7 показывают значимое улучшение над E5. **Статус после EXP-001:** E6/E7 с исходным детерминированным контроллером не сходились (corner-crashing). Стохастическое расширение (Variant D, MATH.md M.6.3b) разработано. Paper C conditional on successful E6/E7 rerun with Variant D.
+**[Замечание о стратегии публикаций]** Три статьи — это план-максимум. Минимально жизнеспособная публикация: объединение Papers A+B в одну работу ("SciLibModal_v2 + Centroid-Based Contrastive Learning for Mathematical Objects"). Paper C публикуется отдельно только если E6-E10 показывают значимое улучшение над E5. **Статус после EXP-003:** E6/E7 работают (corner-crashing решён Variant D), но линейные консеквенты при $\alpha=0.001$ дают малые корректировки. E8 (nonlinear T-S), E9 (potential loss + learnable W), E10 (potential + fuzzy) добавлены для исследования выразительности контроллера и альтернативного формализма потерь.
 
 ---
 

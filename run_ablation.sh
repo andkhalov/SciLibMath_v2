@@ -21,7 +21,7 @@ source "$SCRIPT_DIR/venv/bin/activate"
 # Ablation overrides
 # bs=64: safe for RTX 3090 24GB with 5×SciRus-tiny + patch-based visual pipeline.
 # bs=128 OOMs on worst-case batches (W=1200, K=37 patches × 128 = 4736 ResNet forwards + 5 transformer backwards).
-OVERRIDES="data.dataset_fraction=0.1 data.batch_size=64 data.num_workers=8 training.epochs=3 eval.eval_every_steps=200"
+OVERRIDES="data.dataset_fraction=0.2 data.batch_size=64 data.num_workers=8 training.epochs=5 eval.eval_every_steps=200"
 
 # Family A experiments
 EXPERIMENTS_A=(
@@ -32,6 +32,9 @@ EXPERIMENTS_A=(
     e5_composite_learnable
     e6_fuzzy
     e7_lyapunov
+    e8_nonlinear
+    e9_potential
+    e10_potential_fuzzy
 )
 
 # Family B experiments

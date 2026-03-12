@@ -23,6 +23,7 @@ import torch.nn.functional as F
 
 from .infonce import CentroidInfoNCE, _infonce_loss
 from .alignment import AlignmentLoss, RadialLoss, AntiCollapseLoss
+from .potential import PotentialLoss
 from models.constants import MODALITIES, TEXT_MODALITIES
 
 
@@ -51,6 +52,10 @@ class CompositeLoss(nn.Module):
         tau_target: float = 0.0,
         tau_min: float = 0.01,
         tau_max: float = 0.5,
+        # Potential loss (MATH.md M.3.9, E9/E10)
+        use_potential: bool = False,
+        k_a: float = 1.0,
+        k_r: float = 0.1,
     ):
         super().__init__()
 
@@ -61,6 +66,7 @@ class CompositeLoss(nn.Module):
         self.lambda_reg = lambda_reg
         self.lambda_va = lambda_va
         self.w_g = w_g
+        self.use_potential = use_potential
 
         # Adaptive temperature params (MATH.md M.3.3)
         self.alpha_tau = alpha_tau
@@ -77,6 +83,9 @@ class CompositeLoss(nn.Module):
         self.alignment = AlignmentLoss(C_clip=C_clip)
         self.radial = RadialLoss(rho=rho)
         self.anti_collapse = AntiCollapseLoss()
+
+        # Potential loss (E9/E10 — replaces alignment+radial)
+        self.potential = PotentialLoss(k_a=k_a, k_r=k_r) if use_potential else None
 
     def _compute_adaptive_tau(self, centroid: torch.Tensor) -> float:
         """Compute adaptive temperature τ_eff from collapse score.
@@ -124,20 +133,32 @@ class CompositeLoss(nn.Module):
         L_contrast = nce_out["loss"]
         result["loss_contrast_global"] = L_contrast
 
-        # Alignment in unnormalized space (MATH.md M.3.3)
-        L_align = self.alignment(embeddings, centroid)
-        result["loss_align_global"] = L_align
-
-        # Radial in unnormalized space (MATH.md M.3.3)
-        L_rad = self.radial(embeddings, centroid)
-        result["loss_rad"] = L_rad
-
         # Anti-collapse on normalized centroids (MATH.md M.3.3)
         L_reg = self.anti_collapse(centroid)
         result["loss_reg_global"] = L_reg
 
-        # Global composite
-        L_global = L_contrast + self.lambda_align * L_align + self.lambda_rad * L_rad + self.lambda_reg * L_reg
+        # Branch: potential loss (E9/E10) vs alignment+radial (E3-E8)
+        if self.potential is not None:
+            # MATH.md M.3.9: L_potential = U_attract + U_repel
+            L_potential, pot_info = self.potential(embeddings, centroid)
+            result["loss_potential"] = L_potential
+            result["U_attract"] = pot_info["U_attract"]
+            result["U_repel"] = pot_info["U_repel"]
+            # For compatibility: report zero align/rad
+            result["loss_align_global"] = torch.tensor(0.0, device=centroid.device)
+            result["loss_rad"] = torch.tensor(0.0, device=centroid.device)
+            L_global = L_contrast + L_potential + self.lambda_reg * L_reg
+        else:
+            # Alignment in unnormalized space (MATH.md M.3.3)
+            L_align = self.alignment(embeddings, centroid)
+            result["loss_align_global"] = L_align
+
+            # Radial in unnormalized space (MATH.md M.3.3)
+            L_rad = self.radial(embeddings, centroid)
+            result["loss_rad"] = L_rad
+
+            # Global composite
+            L_global = L_contrast + self.lambda_align * L_align + self.lambda_rad * L_rad + self.lambda_reg * L_reg
 
         # --- Per-modality personal losses (MATH.md M.3.4) ---
         L_personal = torch.tensor(0.0, device=centroid.device)
@@ -193,12 +214,20 @@ class CompositeLoss(nn.Module):
     def get_lambda_vector(self) -> torch.Tensor:
         """Return current λ_t ∈ R^11 (MATH.md M.3.6).
 
-        [τ, λ_align, λ_rad, λ_reg, λ_va, w_en, w_ru, w_lean, w_latex, w_img, w_g]
+        [τ, λ_align/k_a, λ_rad/k_r, λ_reg, λ_va, w_en, w_ru, w_lean, w_latex, w_img, w_g]
+
+        For E9/E10 (use_potential=True): positions 1,2 hold k_a, k_r instead of λ_align, λ_rad.
         """
+        if self.potential is not None:
+            align_or_ka = self.potential.k_a
+            rad_or_kr = self.potential.k_r
+        else:
+            align_or_ka = self.lambda_align
+            rad_or_kr = self.lambda_rad
         return torch.tensor([
             self.tau,
-            self.lambda_align,
-            self.lambda_rad,
+            align_or_ka,
+            rad_or_kr,
             self.lambda_reg,
             self.lambda_va,
             self.modality_weights.get("en", 1.0),
@@ -210,10 +239,14 @@ class CompositeLoss(nn.Module):
         ])
 
     def set_lambda_vector(self, lam: torch.Tensor):
-        """Update hyperparameters from λ_t ∈ R^11 (for fuzzy controller E6-E7)."""
+        """Update hyperparameters from λ_t ∈ R^11 (for fuzzy controller E6-E8, E10)."""
         self.tau = lam[0].item()
-        self.lambda_align = lam[1].item()
-        self.lambda_rad = lam[2].item()
+        if self.potential is not None:
+            self.potential.k_a = lam[1].item()
+            self.potential.k_r = lam[2].item()
+        else:
+            self.lambda_align = lam[1].item()
+            self.lambda_rad = lam[2].item()
         self.lambda_reg = lam[3].item()
         self.lambda_va = lam[4].item()
         self.modality_weights["en"] = lam[5].item()

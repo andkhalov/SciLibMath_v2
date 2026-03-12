@@ -36,5 +36,5 @@ lyapunov:
   alpha: 1.0              # V_t weight for normalized loss
   beta: 0.1               # V_t weight for ||Δλ||²
   gamma: 0.5              # V_t weight for Var_m(w_m)
-  penalty_weight: 0.1     # soft constraint weight
-  xi: 0.01                # threshold for allowable V growth (M.7.2b)
+  penalty_weight: 0.5     # soft constraint weight (was 0.1 — too weak, E7≈E6)
+  xi: 0.001               # threshold for allowable V growth (was 0.01 — too permissive)

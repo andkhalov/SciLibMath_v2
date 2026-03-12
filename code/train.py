@@ -51,12 +51,14 @@ def build_loss_fn(cfg):
 
     elif exp in ("e3_centroid_reg", "e3b_centroid_reg",
                  "e4_composite_static", "e4b_composite_static",
-                 "e6_fuzzy", "e7_lyapunov"):
+                 "e6_fuzzy", "e7_lyapunov", "e8_nonlinear",
+                 "e10_potential_fuzzy"):
         weights = dict(loss_cfg.get("weights", {}))
+        use_potential = loss_cfg.get("use_potential", False)
         return CompositeLoss(
             tau=loss_cfg.tau,
-            lambda_align=loss_cfg.lambda_align,
-            lambda_rad=loss_cfg.lambda_rad,
+            lambda_align=loss_cfg.get("lambda_align", 0.3),
+            lambda_rad=loss_cfg.get("lambda_rad", 0.1),
             lambda_reg=loss_cfg.lambda_reg,
             lambda_va=loss_cfg.lambda_va,
             modality_weights=weights,
@@ -68,13 +70,17 @@ def build_loss_fn(cfg):
             tau_target=loss_cfg.get("tau_target", 0.0),
             tau_min=loss_cfg.get("tau_min", 0.01),
             tau_max=loss_cfg.get("tau_max", 0.5),
+            use_potential=use_potential,
+            k_a=loss_cfg.get("k_a", 1.0),
+            k_r=loss_cfg.get("k_r", 0.1),
         ), "composite"
 
-    elif exp == "e5_composite_learnable":
+    elif exp in ("e5_composite_learnable", "e9_potential"):
+        use_potential = loss_cfg.get("use_potential", False)
         return CompositeLoss(
             tau=loss_cfg.tau,
-            lambda_align=loss_cfg.lambda_align,
-            lambda_rad=loss_cfg.lambda_rad,
+            lambda_align=loss_cfg.get("lambda_align", 0.3),
+            lambda_rad=loss_cfg.get("lambda_rad", 0.1),
             lambda_reg=loss_cfg.lambda_reg,
             lambda_va=loss_cfg.lambda_va,
             p_drop=loss_cfg.get("p_drop", 0.3),
@@ -84,6 +90,9 @@ def build_loss_fn(cfg):
             tau_target=loss_cfg.get("tau_target", 0.0),
             tau_min=loss_cfg.get("tau_min", 0.01),
             tau_max=loss_cfg.get("tau_max", 0.5),
+            use_potential=use_potential,
+            k_a=loss_cfg.get("k_a", 1.0),
+            k_r=loss_cfg.get("k_r", 0.1),
         ), "mixer"
 
     else:
@@ -282,7 +291,7 @@ def main():
     controller = None
     state_tracker = None
     lyapunov = None
-    if cfg.experiment in ("e6_fuzzy", "e7_lyapunov"):
+    if cfg.experiment in ("e6_fuzzy", "e7_lyapunov", "e8_nonlinear", "e10_potential_fuzzy"):
         ctrl_cfg = cfg.get("controller", {})
         total_training_steps = len(train_loader) * cfg.training.epochs
         controller = TSFuzzyController(
@@ -294,6 +303,8 @@ def main():
             noise_anneal=ctrl_cfg.get("noise_anneal", True),
             elastic_gamma=ctrl_cfg.get("elastic_gamma", 0.01),
             total_steps=total_training_steps,
+            nonlinear_consequents=ctrl_cfg.get("nonlinear_consequents", False),
+            consequent_hidden=ctrl_cfg.get("consequent_hidden", 32),
         )
         state_tracker = StateTracker(beta=0.99, device=device)
 
@@ -316,6 +327,12 @@ def main():
     )
     if mixer:
         param_groups.append({"params": mixer.parameters(), "lr": cfg.training.lr})
+    # E8: add nonlinear consequent parameters to optimizer
+    if controller and controller.nl_consequents is not None:
+        param_groups.append({
+            "params": controller.nl_consequents.parameters(),
+            "lr": cfg.training.lr,
+        })
 
     optimizer = torch.optim.AdamW(
         param_groups,

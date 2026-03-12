@@ -1,6 +1,6 @@
 # LIT.md — Список литературы SciLibMath_v2
 
-> **Версия:** 1.2 | **Фаза:** 2a | **Дата:** 2026-03-08
+> **Версия:** 1.3 | **Фаза:** 2a | **Дата:** 2026-03-12
 > **Источники:** `literature/`, `v_1/`
 
 ## Формат записи
@@ -201,6 +201,24 @@
 
 ---
 
+## D+. Потенциальные функции и force-based losses в ML
+
+[NEED_VERIFY: POTENTIAL-PLANNING] Khatib O. "Real-Time Obstacle Avoidance for Manipulators and Mobile Robots." International Journal of Robotics Research, 5(1), 1986.
+Файл: [NEED_VERIFY: source not in literature/]
+Зачем нам: Потенциальные функции для планирования движений — аттракция к цели + репульсия от препятствий. Прямая аналогия с нашим $U_{\text{attract}} + U_{\text{repel}}$ (MATH.md M.3.9).
+Цитирование: Eq. 1-3 (artificial potential field).
+**Paper:** B (conceptual inspiration for E9/E10)
+
+---
+
+[NEED_VERIFY: LJ-MOLECULAR] Lennard-Jones J.E. "Cohesion." Proceedings of the Physical Society, 43(5), 1931.
+Файл: [NEED_VERIFY: source not in literature/]
+Зачем нам: Lennard-Jones potential ($U = 4\varepsilon[(\sigma/r)^{12} - (\sigma/r)^6]$) — классический пример баланса притяжения/отталкивания. Наш $U_{\text{attract}} + U_{\text{repel}}$ = упрощённый аналог: гармоническое притяжение + логарифмическое отталкивание.
+Цитирование: Eq. (LJ potential).
+**Paper:** B (physics analogy for M.3.9)
+
+---
+
 ## E. T-S Fuzzy модели и управление динамическими системами
 
 [WANG-1996] Wang H.O., Tanaka K., Griffin M.F. "An Approach to Fuzzy Control of Nonlinear Systems: Stability and Design Issues." IEEE Transactions on Fuzzy Systems, 4(1), 1996.
@@ -221,6 +239,10 @@
 Файл: `literature/!!a-new-fuzzy-lyapunov-approach-to-non-quadratic-stabilization-1j5mli85hb.pdf`
 Зачем нам: Неквадратичные функции Ляпунова для T-S — выходят за рамки V(x)=x^T P x. Менее консервативные условия устойчивости. Обоснование для нашего E7 (Lyapunov smoothing ≠ quadratic).
 Цитирование: Theorem 1 (non-quadratic Lyapunov), Eq. 8-12 (stability conditions).
+
+---
+
+**[E+ Замечание: Нелинейные консеквенты T-S]** Классические T-S модели используют линейные консеквенты ($A_r \cdot s + b_r$). E8 расширяет THEN-часть до MLP, сохраняя fuzzy антецеденты. Это соответствует обобщённым T-S моделям с нелинейными локальными моделями [WANG-1996, Sec. IV]. Формальные условия устойчивости для нелинейных консеквентов требуют дополнительного анализа (LMI-условия [MOZELLI-2010] могут быть недостаточны — open question).
 
 ---
 
@@ -393,6 +415,7 @@
 | B+++. Hyperparam optim. | — | — | **core** (baselines) |
 | C. Geometry | — | **core** | — |
 | D. Loss functions | ablation context | **core** | — |
+| D+. Potential functions | — | **core** (E9) | context (E10) |
 | E. T-S Fuzzy | — | — | **core** |
 | F. Lyapunov | — | — | **core** |
 | G. Ontologies & DL | — | — | context |
