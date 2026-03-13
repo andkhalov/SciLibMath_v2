@@ -1,0 +1,27 @@
+# E3c: Centroid InfoNCE + alignment + radial — LOW lambda_va calibration
+# Ref: MATH.md M.3.3
+# Same as E3, but lambda_va reduced 0.1→0.01 to test VA dominance hypothesis.
+# EXP-005: In sweep7, L_va was 77% of total loss in E3. Reducing to ~20%.
+experiment: e3c_low_va
+
+loss:
+  type: composite
+  tau: 0.07
+  p_drop: 0.3
+  lambda_align: 0.3
+  lambda_rad: 0.1
+  lambda_reg: 0.05
+  lambda_va: 0.01            # CHANGED: 0.1→0.01 (VA dominance calibration)
+  w_g: 1.0
+  C_clip: 10.0
+  rho: 0.1
+  alpha_tau: 0.5
+  tau_target: 0.0
+  tau_min: 0.01
+  tau_max: 0.5
+  weights:
+    en: 1.0
+    ru: 1.0
+    lean: 1.0
+    latex: 1.0
+    img: 1.0

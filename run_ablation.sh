@@ -45,7 +45,15 @@ EXPERIMENTS_B=(
     e4b_composite_static
 )
 
-ALL_EXPERIMENTS=("${EXPERIMENTS_A[@]}" "${EXPERIMENTS_B[@]}")
+# Family C experiments (calibration variants, EXP-005)
+EXPERIMENTS_C=(
+    e3c_low_va
+    e6c_low_va
+    e10c_low_va
+    e8c_active
+)
+
+ALL_EXPERIMENTS=("${EXPERIMENTS_A[@]}" "${EXPERIMENTS_B[@]}" "${EXPERIMENTS_C[@]}")
 
 # Create logs dir
 mkdir -p logs

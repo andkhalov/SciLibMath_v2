@@ -1,0 +1,36 @@
+# E10c: Potential Loss + Fuzzy T-S controller — LOW lambda_va calibration
+# Ref: MATH.md M.3.10
+# Same as E10, but lambda_va reduced 0.1→0.01 to test VA dominance hypothesis.
+# EXP-005: In sweep7, L_va was 38% of E10 total. Reducing to ~6%.
+experiment: e10c_low_va
+
+loss:
+  type: composite
+  tau: 0.07
+  p_drop: 0.3
+  lambda_reg: 0.05
+  lambda_va: 0.01            # CHANGED: 0.1→0.01
+  w_g: 1.0
+  C_clip: 10.0
+  rho: 0.1
+  alpha_tau: 0.5
+  tau_target: 0.0
+  tau_min: 0.01
+  tau_max: 0.5
+  use_potential: true
+  k_a: 1.0
+  k_r: 0.1
+  weights:
+    en: 1.0
+    ru: 1.0
+    lean: 1.5
+    latex: 1.5
+    img: 1.0
+
+controller:
+  alpha: 0.001
+  warmup_steps: 200
+  step_frequency: 10
+  noise_sigma: 0.01
+  noise_anneal: true
+  elastic_gamma: 0.01

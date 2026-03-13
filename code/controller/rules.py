@@ -150,7 +150,8 @@ class NonlinearConsequent(nn.Module):
     Initialized near zero so initial behavior matches E6.
     """
 
-    def __init__(self, s_dim: int = S_DIM, u_dim: int = U_DIM, hidden: int = 32):
+    def __init__(self, s_dim: int = S_DIM, u_dim: int = U_DIM, hidden: int = 32,
+                 init_scale: float = 0.01):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(s_dim, hidden),
@@ -158,8 +159,9 @@ class NonlinearConsequent(nn.Module):
             nn.Linear(hidden, u_dim),
         )
         # Initialize near zero — matches E6 behavior at start
+        # init_scale controls how aggressive the initial outputs are
         with torch.no_grad():
-            self.net[-1].weight.mul_(0.01)
+            self.net[-1].weight.mul_(init_scale)
             self.net[-1].bias.zero_()
 
     def forward(self, s_t: torch.Tensor) -> torch.Tensor:
@@ -174,6 +176,7 @@ class NonlinearConsequent(nn.Module):
 
 def build_nonlinear_rules(
     n_rules: int = 7, s_dim: int = S_DIM, u_dim: int = U_DIM, hidden: int = 32,
+    init_scale: float = 0.01,
 ) -> nn.ModuleList:
     """Build NonlinearConsequent modules for each rule.
     Ref: MATH.md M.3.8
@@ -182,7 +185,8 @@ def build_nonlinear_rules(
         nn.ModuleList of NonlinearConsequent modules
     """
     return nn.ModuleList([
-        NonlinearConsequent(s_dim=s_dim, u_dim=u_dim, hidden=hidden)
+        NonlinearConsequent(s_dim=s_dim, u_dim=u_dim, hidden=hidden,
+                            init_scale=init_scale)
         for _ in range(n_rules)
     ])
 

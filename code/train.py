@@ -52,7 +52,9 @@ def build_loss_fn(cfg):
     elif exp in ("e3_centroid_reg", "e3b_centroid_reg",
                  "e4_composite_static", "e4b_composite_static",
                  "e6_fuzzy", "e7_lyapunov", "e8_nonlinear",
-                 "e10_potential_fuzzy"):
+                 "e10_potential_fuzzy",
+                 "e3c_low_va", "e6c_low_va", "e8c_active",
+                 "e10c_low_va"):
         weights = dict(loss_cfg.get("weights", {}))
         use_potential = loss_cfg.get("use_potential", False)
         return CompositeLoss(
@@ -291,7 +293,8 @@ def main():
     controller = None
     state_tracker = None
     lyapunov = None
-    if cfg.experiment in ("e6_fuzzy", "e7_lyapunov", "e8_nonlinear", "e10_potential_fuzzy"):
+    if cfg.experiment in ("e6_fuzzy", "e7_lyapunov", "e8_nonlinear", "e10_potential_fuzzy",
+                          "e6c_low_va", "e8c_active", "e10c_low_va"):
         ctrl_cfg = cfg.get("controller", {})
         total_training_steps = len(train_loader) * cfg.training.epochs
         controller = TSFuzzyController(
@@ -305,6 +308,7 @@ def main():
             total_steps=total_training_steps,
             nonlinear_consequents=ctrl_cfg.get("nonlinear_consequents", False),
             consequent_hidden=ctrl_cfg.get("consequent_hidden", 32),
+            init_scale=ctrl_cfg.get("init_scale", 0.01),
         )
         state_tracker = StateTracker(beta=0.99, device=device)
 

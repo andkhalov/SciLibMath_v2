@@ -31,7 +31,8 @@ class TSFuzzyController:
                  noise_anneal: bool = True, elastic_gamma: float = 0.01,
                  total_steps: int = 10000,
                  nonlinear_consequents: bool = False,
-                 consequent_hidden: int = 32):
+                 consequent_hidden: int = 32,
+                 init_scale: float = 0.01):
         self.device = device or torch.device("cpu")
         self.alpha = alpha
         self.nonlinear_consequents = nonlinear_consequents
@@ -47,6 +48,7 @@ class TSFuzzyController:
         if nonlinear_consequents:
             self.nl_consequents = build_nonlinear_rules(
                 n_rules=len(self.rules), hidden=consequent_hidden,
+                init_scale=init_scale,
             ).to(self.device)
 
         # Linguistic variables for antecedent evaluation
