@@ -54,7 +54,9 @@ def build_loss_fn(cfg):
                  "e6_fuzzy", "e7_lyapunov", "e8_nonlinear",
                  "e10_potential_fuzzy",
                  "e3c_low_va", "e6c_low_va", "e8c_active",
-                 "e10c_low_va"):
+                 "e10c_low_va",
+                 "e6_rho03", "e8c_rho03", "e8c_low_va",
+                 "e8c_rho03_low_va", "e8c_boost"):
         weights = dict(loss_cfg.get("weights", {}))
         use_potential = loss_cfg.get("use_potential", False)
         return CompositeLoss(
@@ -75,6 +77,7 @@ def build_loss_fn(cfg):
             use_potential=use_potential,
             k_a=loss_cfg.get("k_a", 1.0),
             k_r=loss_cfg.get("k_r", 0.1),
+            contrast_weight=loss_cfg.get("contrast_weight", 1.0),
         ), "composite"
 
     elif exp in ("e5_composite_learnable", "e9_potential"):
@@ -95,6 +98,7 @@ def build_loss_fn(cfg):
             use_potential=use_potential,
             k_a=loss_cfg.get("k_a", 1.0),
             k_r=loss_cfg.get("k_r", 0.1),
+            contrast_weight=loss_cfg.get("contrast_weight", 1.0),
         ), "mixer"
 
     else:
@@ -294,7 +298,9 @@ def main():
     state_tracker = None
     lyapunov = None
     if cfg.experiment in ("e6_fuzzy", "e7_lyapunov", "e8_nonlinear", "e10_potential_fuzzy",
-                          "e6c_low_va", "e8c_active", "e10c_low_va"):
+                          "e6c_low_va", "e8c_active", "e10c_low_va",
+                          "e6_rho03", "e8c_rho03", "e8c_low_va",
+                          "e8c_rho03_low_va", "e8c_boost"):
         ctrl_cfg = cfg.get("controller", {})
         total_training_steps = len(train_loader) * cfg.training.epochs
         controller = TSFuzzyController(

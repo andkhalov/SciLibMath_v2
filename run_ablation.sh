@@ -53,7 +53,16 @@ EXPERIMENTS_C=(
     e8c_active
 )
 
-ALL_EXPERIMENTS=("${EXPERIMENTS_A[@]}" "${EXPERIMENTS_B[@]}" "${EXPERIMENTS_C[@]}")
+# EXP-006: rho=0.3, combos, contrast boost
+EXPERIMENTS_D=(
+    e6_rho03
+    e8c_rho03
+    e8c_low_va
+    e8c_rho03_low_va
+    e8c_boost
+)
+
+ALL_EXPERIMENTS=("${EXPERIMENTS_A[@]}" "${EXPERIMENTS_B[@]}" "${EXPERIMENTS_C[@]}" "${EXPERIMENTS_D[@]}")
 
 # Create logs dir
 mkdir -p logs

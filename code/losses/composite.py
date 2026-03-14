@@ -56,6 +56,8 @@ class CompositeLoss(nn.Module):
         use_potential: bool = False,
         k_a: float = 1.0,
         k_r: float = 0.1,
+        # Contrast weight (EXP-006: boost contrast priority)
+        contrast_weight: float = 1.0,
     ):
         super().__init__()
 
@@ -67,6 +69,7 @@ class CompositeLoss(nn.Module):
         self.lambda_va = lambda_va
         self.w_g = w_g
         self.use_potential = use_potential
+        self.contrast_weight = contrast_weight
 
         # Adaptive temperature params (MATH.md M.3.3)
         self.alpha_tau = alpha_tau
@@ -147,7 +150,7 @@ class CompositeLoss(nn.Module):
             # For compatibility: report zero align/rad
             result["loss_align_global"] = torch.tensor(0.0, device=centroid.device)
             result["loss_rad"] = torch.tensor(0.0, device=centroid.device)
-            L_global = L_contrast + L_potential + self.lambda_reg * L_reg
+            L_global = self.contrast_weight * L_contrast + L_potential + self.lambda_reg * L_reg
         else:
             # Alignment in unnormalized space (MATH.md M.3.3)
             L_align = self.alignment(embeddings, centroid)
@@ -158,7 +161,7 @@ class CompositeLoss(nn.Module):
             result["loss_rad"] = L_rad
 
             # Global composite
-            L_global = L_contrast + self.lambda_align * L_align + self.lambda_rad * L_rad + self.lambda_reg * L_reg
+            L_global = self.contrast_weight * L_contrast + self.lambda_align * L_align + self.lambda_rad * L_rad + self.lambda_reg * L_reg
 
         # --- Per-modality personal losses (MATH.md M.3.4) ---
         L_personal = torch.tensor(0.0, device=centroid.device)
