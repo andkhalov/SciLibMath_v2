@@ -216,7 +216,7 @@ class TSFuzzyController:
         # Add stochastic exploration noise (MATH.md M.6.3b)
         if self.noise_sigma > 0:
             if self.noise_anneal:
-                sigma_t = self.noise_sigma * max(0, 1.0 - self.step_count / self.total_steps)
+                sigma_t = self.noise_sigma * max(0, 1.0 - self._training_step / self.total_steps)
             else:
                 sigma_t = self.noise_sigma
             noise = torch.randn_like(u_t) * sigma_t

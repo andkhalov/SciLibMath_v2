@@ -62,7 +62,27 @@ EXPERIMENTS_D=(
     e8c_boost
 )
 
-ALL_EXPERIMENTS=("${EXPERIMENTS_A[@]}" "${EXPERIMENTS_B[@]}" "${EXPERIMENTS_C[@]}" "${EXPERIMENTS_D[@]}")
+# EXP-007 (sweep10): Full ablation — both families, fixed controller, 14 experiments
+# Family A: E1-E10 + E8c_low_va (11)
+# Family B: E1b, E3b, E4b (3)
+EXPERIMENTS_E=(
+    e1_pairwise
+    e2_centroid
+    e3_centroid_reg
+    e4_composite_static
+    e5_composite_learnable
+    e6_fuzzy
+    e7_lyapunov
+    e8c_active
+    e9_potential
+    e10_potential_fuzzy
+    e8c_low_va
+    e1b_pairwise
+    e3b_centroid_reg
+    e4b_composite_static
+)
+
+ALL_EXPERIMENTS=("${EXPERIMENTS_E[@]}")
 
 # Create logs dir
 mkdir -p logs

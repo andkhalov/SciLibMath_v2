@@ -1,6 +1,6 @@
 # MATH.md — Полная математическая формализация SciLibMath_v2
 
-> **Версия:** 2.6.2 | **Фаза:** 3 | **Дата:** 2026-03-09
+> **Версия:** 2.7.0 | **Фаза:** 3 | **Дата:** 2026-03-14
 > **Стиль:** PoC (proof-of-concept) — все выводы явные, никаких "очевидно следует"
 > **Papers:** A (M.0-M.2), B (M.3-M.4), C (M.5-M.8)
 
@@ -448,13 +448,15 @@ $$\mathcal{L}_{\text{reg}}^m = \text{ReLU}(\bar{s}_{\text{neg}}^m)$$
 
 **Полное раскрытие** $\mathcal{L}_{E4}^{\text{total}}$:
 
-$$\mathcal{L} = \underbrace{w_g \cdot \bigl[\mathcal{L}_{\text{contrast}} + \lambda_{\text{align}} \cdot \mathcal{L}_{\text{align}} + \lambda_{\text{rad}} \cdot \mathcal{L}_{\text{rad}} + \lambda_{\text{reg}} \cdot \mathcal{L}_{\text{reg}}\bigr]}_{\text{глобальная компонента (4 терма)}} + \underbrace{\sum_m w_m \cdot \bigl[\mathcal{L}_{\text{align}}^m + \mathcal{L}_{\text{contrast}}^m + \lambda_{\text{reg}} \cdot \mathcal{L}_{\text{reg}}^m\bigr]}_{\text{per-modality (5×3 = 15 термов)}} + \underbrace{\lambda_{\text{va}} \cdot \mathcal{L}_{\text{visual\_align}}}_{\text{visual (1 терм)}}$$
+$$\mathcal{L} = \underbrace{w_g \cdot \bigl[\omega_c \cdot \mathcal{L}_{\text{contrast}} + \lambda_{\text{align}} \cdot \mathcal{L}_{\text{align}} + \lambda_{\text{rad}} \cdot \mathcal{L}_{\text{rad}} + \lambda_{\text{reg}} \cdot \mathcal{L}_{\text{reg}}\bigr]}_{\text{глобальная компонента (4 терма)}} + \underbrace{\sum_m w_m \cdot \bigl[\mathcal{L}_{\text{align}}^m + \mathcal{L}_{\text{contrast}}^m + \lambda_{\text{reg}} \cdot \mathcal{L}_{\text{reg}}^m\bigr]}_{\text{per-modality (5×3 = 15 термов)}} + \underbrace{\lambda_{\text{va}} \cdot \mathcal{L}_{\text{visual\_align}}}_{\text{visual (1 терм)}}$$
+
+где $\omega_c \geq 0$ — вес контрастной компоненты (по умолчанию $\omega_c = 1.0$; при $\omega_c > 1$ повышается приоритет контрастного обучения над регуляризацией). Введён в EXP-006 (sweep9) для исследования приоритизации contrast loss.
 
 **Атомарные лосс-компоненты и их эффективные веса:**
 
 | # | Компонента | Эффективный вес | Уровень 1 | Уровень 2 |
 |---|---|---|---|---|
-| 1 | $\mathcal{L}_{\text{contrast}}$ | $w_g$ | (implicit 1) | $w_g$ |
+| 1 | $\mathcal{L}_{\text{contrast}}$ | $w_g \cdot \omega_c$ | $\omega_c$ (default 1.0) | $w_g$ |
 | 2 | $\mathcal{L}_{\text{align}}$ | $w_g \cdot \lambda_{\text{align}}$ | $\lambda_{\text{align}}$ | $w_g$ |
 | 3 | $\mathcal{L}_{\text{rad}}$ | $w_g \cdot \lambda_{\text{rad}}$ | $\lambda_{\text{rad}}$ | $w_g$ |
 | 4 | $\mathcal{L}_{\text{reg}}$ | $w_g \cdot \lambda_{\text{reg}}$ | $\lambda_{\text{reg}}$ | $w_g$ |
@@ -529,7 +531,7 @@ $$\boldsymbol{\lambda}_t = [\underbrace{\tau_t,\; \lambda_{\text{align},t},\; \l
 
 **Размерность 11** = 5 весов типов ($\tau$, $\lambda_{\text{align}}$, $\lambda_{\text{rad}}$, $\lambda_{\text{reg}}$, $\lambda_{\text{va}}$) + 6 модальных весов ($w_{\text{en}}$, $w_{\text{ru}}$, $w_{\text{lean}}$, $w_{\text{latex}}$, $w_{\text{img}}$, $w_g$).
 
-Допустимая область $\Lambda$ (box constraints): $\tau \in [0.03, 0.3]$, $\lambda_{\text{va}} \in [0.01, 0.5]$, $w_m \in [0.05, 0.5]$, и т.д.
+Допустимая область $\Lambda$ (box constraints, после сужения в EXP-001): $\tau \in [0.01, 0.2]$, $\lambda_{\text{align}} \in [0.01, 1.0]$, $\lambda_{\text{rad}} \in [0.001, 0.5]$, $\lambda_{\text{reg}} \in [0.001, 0.5]$, $\lambda_{\text{va}} \in [0.01, 0.5]$, $w_m \in [0.3, 3.0]$, $w_g \in [0.3, 3.0]$.
 
 **[Интуиция]** В E5 LossMixer — "чёрный ящик" (MLP через backprop). В E6 fuzzy controller использует символьные правила — можно сказать **почему** вес модальности изменился.
 
@@ -541,11 +543,13 @@ $$\boldsymbol{\lambda}_t = [\underbrace{\tau_t,\; \lambda_{\text{align},t},\; \l
 
 $$\mathcal{L}_{E7} = \mathcal{L}_{E6} + \lambda_{\text{lyap}} \cdot \mathcal{L}_{\text{lyap}}$$
 
-где:
+где (реализация использует упрощённую форму M.7.2b):
 
-$$\mathcal{L}_{\text{lyap}} = \text{ReLU}\bigl(V_t - V_{t-1} + \eta \cdot \Psi_t - \xi\bigr)$$
+$$\mathcal{L}_{\text{lyap}} = w_{\text{lyap}} \cdot \text{ReLU}\bigl(V_t - V_{t-1} - \xi\bigr)$$
 
-$V_t$ — функция Ляпунова (M.7), $V_{t-1}$ — её значение на предыдущем шаге, $\Psi_t$ — мера дисбаланса (M.7), $\eta > 0$ — коэффициент затухания, $\xi > 0$ — шумовой потолок.
+$V_t$ — функция Ляпунова (M.7), $V_{t-1}$ — её значение на предыдущем шаге, $\xi > 0$ — порог допустимого роста (шумовой потолок).
+
+**[Замечание]** Теоретическая формулировка (M.7.3) включает $\Psi_t$ (мера дисбаланса): $\mathcal{L}_{\text{lyap}} = \text{ReLU}(V_t - V_{t-1} + \eta\Psi_t - \xi)$. Реализация использует упрощённую M.7.2b без $\Psi_t$: это проще в отладке и не усиливает деструктивный сигнал при corner-crashing контроллера (EXP-001).
 
 **[Замечание о каузальности]** Используется $V_t - V_{t-1}$, а **не** $V_{t+1} - V_t$: на шаге $t$ значение $V_{t+1}$ ещё не доступно. Мы штрафуем за *уже наблюдаемый* рост $V_t$ относительно предыдущего шага. Это согласовано с реализацией в TZ.md (`V_current - V_prev`).
 
@@ -655,7 +659,7 @@ $$[\Pi_\Lambda(\mathbf{x})]_j = \text{clamp}(x_j, \ell_j, u_j)$$
 
 **[Определение M.5.1 — Вектор состояния]**
 
-$$\mathbf{s}_t = \bigl[\underbrace{L_t,\; \Delta L_t,\; \text{EMA}_t,\; \text{Var}_t,\; \text{conflict}_t,\; \text{collapse}_t,\; \|\nabla_\theta L_t\|,\; \Delta R_t}_{\text{Группа 1: агрегированные (8)}},\; \underbrace{L_{\text{en},t},\; L_{\text{ru},t},\; L_{\text{lean},t},\; L_{\text{latex},t},\; L_{\text{img},t}}_{\text{Группа 2: per-modality loss (5)}},\; \underbrace{\text{EMA}_{\text{en},t},\; \text{EMA}_{\text{ru},t},\; \text{EMA}_{\text{lean},t},\; \text{EMA}_{\text{latex},t},\; \text{EMA}_{\text{img},t}}_{\text{Группа 3: per-modality EMA (5)}}\bigr] \in \mathbb{R}^p, \quad p = 18$$
+$$\mathbf{s}_t = \bigl[\underbrace{L_t,\; \Delta L_t,\; \text{EMA}(\Delta L_t),\; \text{Var}_t,\; \text{collapse}_t,\; \Delta L_{\text{align},t},\; \Delta L_{\text{reg},t},\; \text{Var}_t^{\text{proxy}}}_{\text{Группа 1: агрегированные (8)}},\; \underbrace{L_{\text{en},t},\; L_{\text{ru},t},\; L_{\text{lean},t},\; L_{\text{latex},t},\; L_{\text{img},t}}_{\text{Группа 2: per-modality loss (5)}},\; \underbrace{\widetilde{L}_{\text{en},t},\; \widetilde{L}_{\text{ru},t},\; \widetilde{L}_{\text{lean},t},\; \widetilde{L}_{\text{latex},t},\; \widetilde{L}_{\text{img},t}}_{\text{Группа 3: per-modality EMA (5)}}\bigr] \in \mathbb{R}^p, \quad p = 18$$
 
 **Группа 1 — Агрегированные сигналы** (8 компонент):
 
@@ -677,33 +681,27 @@ $$\bar{L}_t = \frac{1}{M} \sum_m L_{m,t}, \quad \text{Var}_t = \frac{1}{M} \sum_
 
 $\text{Var}_t \to 0$: сбалансированное обучение. $\text{Var}_t \gg 0$: доминация одной модальности.
 
-**$\text{conflict}_t$** — конфликт градиентов между модальностями:
-
-$$\text{cos\_conflict}^{m,m'} = \frac{\langle \nabla_\theta \mathcal{L}^m,\; \nabla_\theta \mathcal{L}^{m'}\rangle}{\|\nabla_\theta \mathcal{L}^m\| \cdot \|\nabla_\theta \mathcal{L}^{m'}\| + \varepsilon}$$
-
-$$\text{conflict}_t = \frac{1}{\binom{M}{2}} \sum_{m < m'} \max\bigl(0,\; -\text{cos\_conflict}^{m,m'}\bigr) \in [0, 1]$$
-
-$\text{conflict}_t \to 0$: градиенты согласованы. $\text{conflict}_t \to 1$: модальности "тянут" в противоположных направлениях.
-
-**[Assumption A.5]** Вычисление gradient conflict требует $M$ backward passes. Альтернатива: proxy через $\text{Var}_t$ (дешевле, менее точный).
-
-**[Implementation Note — Proxy для gradient conflict]** В текущей реализации $\text{conflict}_t$ аппроксимируется через $\text{Var}_m(L_{m,t})$ вместо прямого вычисления $\cos(\nabla_\theta \mathcal{L}^m, \nabla_\theta \mathcal{L}^{m'})$. Прямое вычисление требует $O(M^2)$ backward passes — непрактично в training loop (при $M=5$ это 10 дополнительных backward passes на каждый шаг). Аппроксимация обоснована: высокая $\text{Var}_m(L_m)$ коррелирует с gradient conflict, т.к. модальности с сильно различающимися loss-значениями генерируют конфликтующие градиентные направления.
-
 **$\text{collapse}_t$** — индикатор коллапса:
 
 $$\text{collapse}_t = \text{clamp}\bigl((\bar{s}_{\text{neg},t} - 0.1) / 0.9,\; 0,\; 1\bigr)$$
 
-**$\|\nabla_\theta L_t\|$** — норма градиента (скаляр):
+При отсутствии collapse_score используется $\mathcal{L}_{\text{reg}}^{\text{global}}$ как proxy.
 
-$$\|\nabla_\theta L_t\| = \sqrt{\sum_j (\partial L_t / \partial \theta_j)^2}$$
+**$\Delta L_{\text{align},t}$** — текущее значение alignment loss (скаляр):
 
-**[Интуиция]** Gradient norm характеризует "масштаб" обновления. Резкий рост может сигнализировать о нестабильности, падение до нуля — о стагнации на плато.
+$$\Delta L_{\text{align},t} = \mathcal{L}_{\text{align}}^{\text{global}} \text{ на шаге } t$$
 
-**$\Delta R_t$** — drift retrieval метрики:
+**[Интуиция]** Alignment loss как компонент состояния позволяет контроллеру отслеживать динамику стягивания модальностей к центроиду.
 
-$$\Delta R_t = R@1_t - R@1_{t-1}$$
+**$\Delta L_{\text{reg},t}$** — текущее значение regularization loss (скаляр):
 
-вычисляется на валидационном подмножестве каждые $N_{\text{eval}}$ шагов.
+$$\Delta L_{\text{reg},t} = \mathcal{L}_{\text{reg}}^{\text{global}} \text{ на шаге } t$$
+
+**$\text{Var}_t^{\text{proxy}}$** — proxy для gradient conflict:
+
+$$\text{Var}_t^{\text{proxy}} = \text{Var}_t = \frac{1}{M}\sum_m(L_{m,t} - \bar{L}_t)^2$$
+
+**[Implementation Note]** В ранних версиях (v2.6.2) планировались $\text{conflict}_t$ (cosine gradient conflict), $\|\nabla_\theta L_t\|$ (gradient norm) и $\Delta R_t$ (retrieval drift) как компоненты Group 1 (indices 4-7). В реализации они заменены на: $\text{collapse}_t$ (index 4), $\Delta L_{\text{align},t}$ (index 5), $\Delta L_{\text{reg},t}$ (index 6), $\text{Var}_t^{\text{proxy}}$ (index 7). Причина: gradient conflict требует $O(M^2)$ backward passes — непрактично в training loop. $\text{Var}_t^{\text{proxy}}$ — дешёвый proxy ($O(1)$), обоснованный корреляцией высокой $\text{Var}_m(L_m)$ с gradient conflict. $\Delta L_{\text{align}}$ и $\Delta L_{\text{reg}}$ дают контроллеру прямой сигнал о качестве alignment и regularization.
 
 **Группа 2 — Per-modality loss** (5 компонент, по одной на каждую модальность):
 
@@ -717,11 +715,11 @@ $$L_{m,t} = \mathcal{L}_{\text{personal}}^m \text{ на шаге } t$$
 
 Для каждой $m \in \mathcal{M}$:
 
-$$\Delta L_{m,t} = L_{m,t} - L_{m,t-1}$$
+$$\widetilde{L}_{m,t} = \beta \cdot \widetilde{L}_{m,t-1} + (1 - \beta) \cdot L_{m,t}, \quad \beta = 0.99$$
 
-$$\text{EMA}_{m,t} = \beta \cdot \text{EMA}_{m,t-1} + (1 - \beta) \cdot \Delta L_{m,t}, \quad \beta = 0.9$$
+**[Интуиция]** $\widetilde{L}_{m,t}$ — сглаженное значение per-modality loss (EMA of $L_{m,t}$, **не** EMA of $\Delta L_{m,t}$). Это позволяет контроллеру видеть усреднённый уровень потерь модальности $m$, фильтруя пошаговый шум. Модальность с $\widetilde{L}_{m,t} \gg \widetilde{L}_{m',t}$ — отстающая.
 
-**[Интуиция]** $\text{EMA}_{m,t}$ показывает тренд обучения модальности $m$. Если $\text{EMA}_{m,t} > 0$ при $\text{EMA}_t < 0$ — модальность $m$ стагнирует на фоне общего прогресса.
+**[Отличие от ранней версии]** В v2.6.2 планировалась EMA от $\Delta L_{m,t}$ (тренд изменения). Реализация использует EMA от $L_{m,t}$ (сглаженное значение): это проще и информативнее для правила R6 (Visual Misalignment), которое реагирует на **абсолютный уровень** loss модальности, а не на его тренд.
 
 **[Связь с SETUP_DRAFT]** Список сигналов из SETUP_DRAFT: "$\Delta L_t$, EMA loss slope, gradient norm, inter-modality conflict, collapse indicator, retrieval metric drift" — все 6 компонент включены + $L_t$ и $\text{Var}_t$ (Группа 1). Требование "по изменению **всех компонентов** функции потерь" теперь выполнено через per-modality $L_{m,t}$ и $\text{EMA}_{m,t}$ (Группы 2-3).
 
@@ -735,26 +733,28 @@ $$\text{EMA}_{m,t} = \beta \cdot \text{EMA}_{m,t-1} + (1 - \beta) \cdot \Delta L
 
 | Компонент $\mathbf{s}_t$ | Группа | Терм-множество | Сокращения |
 |---|---|---|---|
-| $\Delta L_t$ | 1 (агр.) | {Negative Large, Negative Small, Zero, Positive Small, Positive Large} | NL, NS, ZE, PS, PL |
-| $\text{EMA}_t$ | 1 (агр.) | {Decreasing, Stable, Increasing} | DEC, STB, INC |
-| $\text{Var}_t$ | 1 (агр.) | {Low, Medium, High} | LO, MED, HI |
-| $\text{conflict}_t$ | 1 (агр.) | {Low, Medium, High} | LO, MED, HI |
-| $\text{collapse}_t$ | 1 (агр.) | {Safe, Warning, Critical} | SF, WR, CR |
-| $\|\nabla L_t\|$ | 1 (агр.) | {Vanishing, Normal, Exploding} | VAN, NOR, EXP |
-| $L_{m,t}$ | 2 (per-m) | {Low, Medium, High} | LO, MED, HI |
-| $\text{EMA}_{m,t}$ | 3 (per-m) | {Decreasing, Stable, Increasing} | DEC, STB, INC |
+| $L_t$ | 1 (агр.) | {Low, Medium, High} | LO, MD, HI |
+| $\text{EMA}(\Delta L_t)$ | 1 (агр.) | {Decreasing, Stable, Increasing} | DEC, STB, INC |
+| $\text{Var}_t$ | 1 (агр.) | {Low, High} | LO, HI |
+| $\text{collapse}_t$ | 1 (агр.) | {Low, High} | LO, HI |
+| $L_{m,t}$ | 2 (per-m) | {Low, Medium, High} | LO, MD, HI |
+| $\widetilde{L}_{m,t}$ | 3 (per-m) | {Decreasing, Stable, Increasing} | DEC, STB, INC |
 
-**[Замечание]** Per-modality компоненты ($L_{m,t}$, $\text{EMA}_{m,t}$) используют те же формы функций принадлежности (треугольные, M.6.2), но с **per-modality running statistics** для нормализации (отдельные running mean/std для каждой модальности). Терм-множества одинаковы для всех $m \in \mathcal{M}$ — различия в динамике отражаются через нормализацию.
+**[Замечание]** Терм-множества сокращены по сравнению с ранней версией (v2.6.2): $\Delta L_t$ с 5 термами → $L_t$ с 3 термами, collapse с 3 → 2 терма, Var с 3 → 2 терма. Сокращение обусловлено z-score нормализацией входов: при нормализованных входах $\sim\mathcal{N}(0,1)$ достаточно 2-3 термов для покрытия значимых режимов. Компоненты $\Delta L_{\text{align}}$, $\Delta L_{\text{reg}}$ и $\text{Var}^{\text{proxy}}$ (indices 5-7) используются только через матрицы $A_r$ правил, без явной фаззификации.
+
+**[Замечание]** Per-modality компоненты ($L_{m,t}$, $\widetilde{L}_{m,t}$) используют те же формы функций принадлежности (Gaussian, M.6.2) с **общими** running statistics (единая z-score нормализация всего $\mathbf{s}_t$). Терм-множества одинаковы для всех $m \in \mathcal{M}$.
 
 ### M.6.2 Функции принадлежности
 
-**[Определение M.6.2]** Треугольные функции принадлежности:
+**[Определение M.6.2]** Gaussian функции принадлежности:
 
-$$\mu_A(x) = \max\left(0,\; 1 - \frac{|x - c_A|}{w_A}\right)$$
+$$\mu_A(x) = \exp\left(-\frac{(x - c_A)^2}{2\sigma_A^2}\right)$$
 
-где $c_A$ — центр терма, $w_A$ — ширина.
+где $c_A$ — центр терма, $\sigma_A$ — ширина (стандартное отклонение).
 
-**[Assumption A.6]** Компоненты $\mathbf{s}_t$ нормализуются через running statistics (running mean/std с momentum) перед применением функций принадлежности.
+**[Отличие от v2.6.2]** Ранняя версия специфицировала треугольные MF ($\mu_A(x) = \max(0, 1 - |x-c_A|/w_A)$). Реализация использует Gaussian MF: (1) гладкие производные всюду (нет точки перегиба на границе носителя), (2) ненулевые значения на всей действительной оси (нет "мёртвых зон"), (3) product t-norm с Gaussian MF даёт Gaussian результат (замкнутость). Для z-score нормализованных входов ($\sim\mathcal{N}(0,1)$) центры калиброваны: LO/DEC ~ $-1.0$, MD/STB ~ $0.0$, HI/INC ~ $+1.0$.
+
+**[Assumption A.6]** Компоненты $\mathbf{s}_t$ нормализуются через running statistics (running mean/var с momentum $\beta_{\text{norm}} = 0.99$) перед применением функций принадлежности. Нормализация обновляется на **каждом** шаге обучения (включая шаги без активации контроллера), обеспечивая актуальные статистики.
 
 ### M.6.3 Правила T-S
 
@@ -786,15 +786,17 @@ $$\mu_{\neg A}(x) = 1 - \mu_A(x)$$
 
 | # | Режим | Антецедент | Консеквент (направление $\mathbf{u}_t$) |
 |---|---|---|---|
-| R0 | Default | ни одно правило R1-R6 не активировано сильно ($\max_r \bar{h}_r < \theta_{\text{act}}$) | $\mathbf{u}_t = \mathbf{0}$ (без корректировки) |
-| R1 | Modality Imbalance | $\text{Var}$ is HI $\wedge$ $\text{EMA}$ is (STB or INC) | $\uparrow \lambda_{\text{align}}$, $\downarrow w_m$ для $m$ с $L_{m,t}$ is HI |
-| R2 | Collapse Risk | $\text{collapse}$ is WR or CR | $\uparrow \lambda_{\text{reg}}$, $\uparrow \tau$ |
-| R3 | Gradient Conflict | $\text{conflict}$ is HI $\wedge$ $\Delta L$ is PS/PL | $\downarrow w_m$ для $m$ с $\text{EMA}_{m,t}$ is INC |
-| R4 | Stable Convergence | $\text{EMA}$ is DEC $\wedge$ $\text{Var}$ is LO $\wedge$ $\text{collapse}$ is SF | $\mathbf{u}_t \approx \mathbf{0}$ (min intervention) |
-| R5 | Stagnation | $\text{EMA}$ is (STB or INC) $\wedge$ $\Delta L$ is ZE | $\uparrow \tau$, $\uparrow \lambda_{\text{align}}$ slightly |
-| R6 | Visual Misalignment | $L_{\text{img},t}$ is HI $\wedge$ $\text{EMA}_{\text{img},t}$ is (STB or INC) | $\uparrow \lambda_{\text{va}}$ |
+| R0 | Healthy | $L_t$ is LO $\wedge$ $\text{EMA}(\Delta L)$ is DEC | $\mathbf{u}_t = \mathbf{0}$ (без корректировки) |
+| R1 | Modality Imbalance | $\text{Var}$ is HI | $\uparrow \lambda_{\text{align}}$, $\downarrow w_m$ для $m$ с $L_{m,t}$ is HI, $\uparrow w_g$ |
+| R2 | Collapse Risk | $\text{collapse}$ is HI | $\uparrow \tau$, $\uparrow \lambda_{\text{reg}}$, $\downarrow \lambda_{\text{align}}$ |
+| R3 | Stagnation | $L_t$ is HI $\wedge$ $\text{EMA}(\Delta L)$ is STB | $\uparrow \lambda_{\text{align}}$, $\downarrow \tau$ |
+| R4 | Overshoot | $\text{EMA}(\Delta L)$ is INC (loss increasing) | $\uparrow \tau$, $\downarrow \lambda_{\text{align}}$, $\downarrow \lambda_{\text{rad}}$, $\downarrow \lambda_{\text{reg}}$ |
+| R5 | Gradient Conflict | $\text{Var}^{\text{proxy}}$ is HI | $\downarrow \lambda_{\text{align}}$, $\uparrow \lambda_{\text{reg}}$ |
+| R6 | Visual Misalignment | $L_{\text{img},t}$ is HI $\wedge$ $\widetilde{L}_{\text{img},t}$ is (STB or INC) | $\uparrow \lambda_{\text{va}}$ |
 
-**[Замечание]** R0 обеспечивает безопасный fallback: если входные сигналы не активируют ни одно правило сильно (все $\bar{h}_r$ малы), контроллер не вмешивается. Порог $\theta_{\text{act}}$ — гиперпараметр (рекомендация: $0.05$).
+**[Замечание]** R0 — "healthy" mode: при хорошей динамике (loss низкий и убывает) коррекция нулевая ($A_0 = 0$, $\mathbf{b}_0 = 0$). В отличие от ранней версии (v2.6.2), R0 имеет явный антецедент (а не fallback по порогу $\theta_{\text{act}}$). При нормализованном $\bar{h}_r$ правило R0 активируется когда другие правила неактивны.
+
+**[Замечание: R3/R5 vs v2.6.2]** R3 (Stagnation) и R5 (Gradient Conflict) переставлены относительно v2.6.2: в реализации R3=Stagnation, R5=Gradient Conflict. R4 (Overshoot) заменяет R4 (Stable Convergence) v2.6.2: overshoot — более полезная реакция (снижение λ при росте loss), тогда как stable convergence совпадает по поведению с R0.
 
 **[Замечание: R6 и визуальная модальность]** Правило R6 реагирует на ситуацию когда визуальный энкодер отстаёт. Антецедент использует $L_{\text{img},t}$ и $\text{EMA}_{\text{img},t}$ из $\mathbf{s}_t$ (Группы 2, 3) как proxy для $\mathcal{L}_{\text{visual\_align}}$: высокий per-modality loss визуальной модальности и отсутствие улучшения (EMA STB/INC) косвенно указывают на слабое визуальное выравнивание. Контроллер увеличивает $\lambda_{\text{va}}$. При снижении $L_{\text{img},t}$ (is LO) R6 деактивируется.
 
@@ -802,15 +804,15 @@ $$\mu_{\neg A}(x) = 1 - \mu_A(x)$$
 
 **[Определение M.6.3* — Конкретные матрицы $A_r$, $\mathbf{b}_r$ для ключевых правил]**
 
-Напомним индексацию:
+Напомним индексацию (0-based, как в реализации):
 
 $\mathbf{s}_t \in \mathbb{R}^{18}$:
-Группа 1 (indices 1-8): $L_t, \Delta L_t, \text{EMA}_t, \text{Var}_t, \text{conflict}_t, \text{collapse}_t, \|\nabla L\|, \Delta R_t$
-Группа 2 (indices 9-13): $L_{\text{en}}, L_{\text{ru}}, L_{\text{lean}}, L_{\text{latex}}, L_{\text{img}}$
-Группа 3 (indices 14-18): $\text{EMA}_{\text{en}}, \text{EMA}_{\text{ru}}, \text{EMA}_{\text{lean}}, \text{EMA}_{\text{latex}}, \text{EMA}_{\text{img}}$
+Группа 1 (indices 0-7): $L_t(0), \Delta L_t(1), \text{EMA}(\Delta L)(2), \text{Var}_t(3), \text{collapse}_t(4), \Delta L_{\text{align}}(5), \Delta L_{\text{reg}}(6), \text{Var}^{\text{proxy}}(7)$
+Группа 2 (indices 8-12): $L_{\text{en}}(8), L_{\text{ru}}(9), L_{\text{lean}}(10), L_{\text{latex}}(11), L_{\text{img}}(12)$
+Группа 3 (indices 13-17): $\widetilde{L}_{\text{en}}(13), \widetilde{L}_{\text{ru}}(14), \widetilde{L}_{\text{lean}}(15), \widetilde{L}_{\text{latex}}(16), \widetilde{L}_{\text{img}}(17)$
 
 $\mathbf{u}_t \in \mathbb{R}^{11}$:
-indices 1-11: $\tau, \lambda_{\text{align}}, \lambda_{\text{rad}}, \lambda_{\text{reg}}, \lambda_{\text{va}}, w_{\text{en}}, w_{\text{ru}}, w_{\text{lean}}, w_{\text{latex}}, w_{\text{img}}, w_g$
+indices 0-10: $\tau(0), \lambda_{\text{align}}(1), \lambda_{\text{rad}}(2), \lambda_{\text{reg}}(3), \lambda_{\text{va}}(4), w_{\text{en}}(5), w_{\text{ru}}(6), w_{\text{lean}}(7), w_{\text{latex}}(8), w_{\text{img}}(9), w_g(10)$
 
 **R1 (Modality Imbalance):** $A_{R1} \in \mathbb{R}^{11 \times 18}$ — разреженная, $\sim$12 ненулевых элементов.
 
@@ -821,22 +823,22 @@ indices 1-11: $\tau, \lambda_{\text{align}}, \lambda_{\text{rad}}, \lambda_{\tex
 
 | Строка ($u$-компонент) | Столбец ($s$-компонент) | Значение | Интуиция |
 |---|---|---|---|
-| $\lambda_{\text{align}}$ (2) | $\text{Var}_t$ (4) | $+\alpha_1$ | Высокий дисбаланс → усилить alignment |
-| $w_{\text{en}}$ (6) | $L_{\text{en}}$ (9) | $-\alpha_2$ | Высокий loss en → снизить $w_{\text{en}}$ |
-| $w_{\text{ru}}$ (7) | $L_{\text{ru}}$ (10) | $-\alpha_2$ | Аналогично для ru |
-| $w_{\text{lean}}$ (8) | $L_{\text{lean}}$ (11) | $-\alpha_2$ | Аналогично для lean |
-| $w_{\text{latex}}$ (9) | $L_{\text{latex}}$ (12) | $-\alpha_2$ | Аналогично для latex |
-| $w_{\text{img}}$ (10) | $L_{\text{img}}$ (13) | $-\alpha_2$ | Аналогично для img |
-| $w_{\text{en}}$ (6) | $\text{EMA}_{\text{en}}$ (14) | $-\alpha_3$ | Растущий тренд → дополнительно снизить |
-| $w_{\text{ru}}$ (7) | $\text{EMA}_{\text{ru}}$ (15) | $-\alpha_3$ | ... |
-| $w_{\text{lean}}$ (8) | $\text{EMA}_{\text{lean}}$ (16) | $-\alpha_3$ | ... |
-| $w_{\text{latex}}$ (9) | $\text{EMA}_{\text{latex}}$ (17) | $-\alpha_3$ | ... |
-| $w_{\text{img}}$ (10) | $\text{EMA}_{\text{img}}$ (18) | $-\alpha_3$ | ... |
-| $w_g$ (11) | $\text{Var}_t$ (4) | $+\alpha_4$ | Дисбаланс → усилить global (стягивание к среднему) |
+| $\lambda_{\text{align}}$ (1) | $\text{Var}_t$ (3) | $+2\alpha$ | Высокий дисбаланс → усилить alignment |
+| $w_{\text{en}}$ (5) | $L_{\text{en}}$ (8) | $-\alpha$ | Высокий loss en → снизить $w_{\text{en}}$ |
+| $w_{\text{ru}}$ (6) | $L_{\text{ru}}$ (9) | $-\alpha$ | Аналогично для ru |
+| $w_{\text{lean}}$ (7) | $L_{\text{lean}}$ (10) | $-\alpha$ | Аналогично для lean |
+| $w_{\text{latex}}$ (8) | $L_{\text{latex}}$ (11) | $-\alpha$ | Аналогично для latex |
+| $w_{\text{img}}$ (9) | $L_{\text{img}}$ (12) | $-\alpha$ | Аналогично для img |
+| $w_{\text{en}}$ (5) | $\widetilde{L}_{\text{en}}$ (13) | $-0.5\alpha$ | Растущий тренд → дополнительно снизить |
+| $w_{\text{ru}}$ (6) | $\widetilde{L}_{\text{ru}}$ (14) | $-0.5\alpha$ | ... |
+| $w_{\text{lean}}$ (7) | $\widetilde{L}_{\text{lean}}$ (15) | $-0.5\alpha$ | ... |
+| $w_{\text{latex}}$ (8) | $\widetilde{L}_{\text{latex}}$ (16) | $-0.5\alpha$ | ... |
+| $w_{\text{img}}$ (9) | $\widetilde{L}_{\text{img}}$ (17) | $-0.5\alpha$ | ... |
+| $w_g$ (10) | $\text{Var}_t$ (3) | $+\alpha$ | Дисбаланс → усилить global (стягивание к среднему) |
 
 $\mathbf{b}_{R1} = \mathbf{0}$ (нет bias: при нулевом $\mathbf{s}_t$ коррекция нулевая).
 
-Масштабы: $\alpha_1, \alpha_2, \alpha_3, \alpha_4 > 0$ — гиперпараметры (задаются в config, рекомендация: $\alpha_2 \sim 0.1$, $\alpha_3 \sim 0.05$, $\alpha_1 \sim \alpha_4 \sim 0.02$).
+Масштаб $\alpha > 0$ — единый коэффициент правила (в реализации: `alpha` из конфига, по умолчанию $0.01$). Все коэффициенты матрицы выражаются через $\alpha$ с мультипликаторами: $2\alpha$ для усиленной реакции, $0.5\alpha$ для ослабленной.
 
 **[Интуиция]** $A_{R1}$ кодирует **отрицательную обратную связь**: модальность с высоким loss получает **меньший** вес (в отличие от SGD, который увеличивает градиент для модальности с высоким loss — см. T.6). Два уровня реакции: мгновенный ($L_{m,t}$, коэффициент $\alpha_2$) и трендовый ($\text{EMA}_{m,t}$, коэффициент $\alpha_3 < \alpha_2$). Трендовый — мягче, но устойчивее к шуму.
 
@@ -844,9 +846,9 @@ $\mathbf{b}_{R1} = \mathbf{0}$ (нет bias: при нулевом $\mathbf{s}_t
 
 | Строка ($u$-компонент) | Столбец ($s$-компонент) | Значение | Интуиция |
 |---|---|---|---|
-| $\tau$ (1) | $\text{collapse}_t$ (6) | $+\alpha_5$ | Collapse → увеличить $\tau$ (размягчить softmax) |
-| $\lambda_{\text{reg}}$ (4) | $\text{collapse}_t$ (6) | $+\alpha_6$ | Collapse → усилить anti-collapse регуляризацию |
-| $\lambda_{\text{align}}$ (2) | $\text{collapse}_t$ (6) | $-\alpha_7$ | Collapse → ослабить alignment (не стягивать ещё сильнее) |
+| $\tau$ (0) | $\text{collapse}_t$ (4) | $+3\alpha$ | Collapse → увеличить $\tau$ (размягчить softmax) |
+| $\lambda_{\text{reg}}$ (3) | $\text{collapse}_t$ (4) | $+2\alpha$ | Collapse → усилить anti-collapse регуляризацию |
+| $\lambda_{\text{align}}$ (1) | $\text{collapse}_t$ (4) | $-\alpha$ | Collapse → ослабить alignment (не стягивать ещё сильнее) |
 
 $\mathbf{b}_{R2} = \mathbf{0}$.
 
@@ -854,9 +856,9 @@ $\mathbf{b}_{R2} = \mathbf{0}$.
 
 **[Замечание]** Остальные $A_{R3}$-$A_{R6}$ конструируются по тому же принципу (разреженность, отрицательная обратная связь). Полное определение всех матриц — задача TZ.md/реализации (config YAML). Здесь $A_{R1}$, $A_{R2}$ даны как показательные примеры, достаточные для теоремы T.4.
 
-**[Замечание: R3 и proxy через $L_{m,t}$]** Вычисление per-modality gradient conflict требует $M$ backward passes (A.5), что дорого. Правило R3 использует $\text{EMA}_{m,t}$ (Группа 3) как proxy: модальность с $\text{EMA}_{m,t}$ is INC (растущий тренд потерь) при общем конфликте — вероятный источник конфликта. Это даёт $O(1)$ оценку вместо $O(M)$ backward passes.
+**[Замечание: R5 и proxy через $\text{Var}^{\text{proxy}}$]** Прямое вычисление per-modality gradient conflict требует $M$ backward passes (A.5). R5 (Gradient Conflict) использует $\text{Var}_t^{\text{proxy}} = \text{Var}_m(L_{m,t})$ как proxy: высокая дисперсия модальных потерь коррелирует с gradient conflict. Это даёт $O(1)$ оценку вместо $O(M^2)$ backward passes.
 
-**[Связь с SETUP_DRAFT]** Правила R1-R3 соответствуют "regimes A-C": (A) one modality dominates, (B) global loss decreases but one branch diverges, (C) collapse risk. R4 = regime D (stable convergence).
+**[Связь с SETUP_DRAFT]** Правила R1-R2 соответствуют "regimes A-B": (A) one modality dominates, (B) collapse risk. R3 = stagnation, R4 = overshoot, R5 = gradient conflict, R6 = visual misalignment.
 
 **[Литература]** T-S model: [WANG-1996, Sec. II]. PDC controller design: [WANG-1996, Sec. IV].
 
