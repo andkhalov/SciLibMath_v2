@@ -62,7 +62,9 @@ class TSFuzzyController:
         self.running_var = torch.ones(18, device=self.device)
         self.norm_momentum = norm_momentum
         self.warmup_steps = warmup_steps
-        self.step_count = 0
+        self.step_count = 0          # counts normalization calls (legacy)
+        self._training_step = 0      # counts ALL step() calls (for step_frequency)
+        self._cached_h_bar = torch.zeros(7, device=self.device)  # last firing's h_bar (for logging)
 
         # Stochastic exploration (MATH.md M.6.3b)
         self.step_frequency = step_frequency
@@ -72,18 +74,26 @@ class TSFuzzyController:
         self.total_steps = total_steps
         self._last_lambda = None  # cached output for non-update steps
 
+    def _update_running_stats(self, s_t: torch.Tensor):
+        """Update running mean/var from every training step (even skipped ones).
+        Called from step() unconditionally so stats stay fresh.
+        """
+        beta = self.norm_momentum
+        s = s_t.detach()
+        self.running_mean = beta * self.running_mean + (1 - beta) * s
+        self.running_var = beta * self.running_var + (1 - beta) * (s - self.running_mean) ** 2
+
     def _normalize_state(self, s_t: torch.Tensor) -> torch.Tensor:
         """Z-score normalize s_t using running statistics.
         During warmup returns raw values (MFs won't be meaningful anyway).
         After warmup, maps s_t to ~N(0,1) per dimension so MFs calibrated
         for z-scored space activate properly.
-        """
-        self.step_count += 1
-        beta = self.norm_momentum
-        self.running_mean = beta * self.running_mean + (1 - beta) * s_t.detach()
-        self.running_var = beta * self.running_var + (1 - beta) * (s_t.detach() - self.running_mean) ** 2
 
-        if self.step_count < self.warmup_steps:
+        Note: running stats are updated in _update_running_stats() called from step().
+        """
+        self.step_count += 1  # legacy counter (tracks normalization calls)
+
+        if self._training_step < self.warmup_steps:
             return s_t  # raw during warmup
 
         std = (self.running_var + 1e-8).sqrt()
@@ -189,13 +199,19 @@ class TSFuzzyController:
             u_t: [11] correction (zero if skipped)
             h_bar: [7] rule activations (zero if skipped)
         """
+        # Always increment training step and update running stats
+        # (FIX: step_count was only incremented inside _normalize_state,
+        #  which was skipped on non-update steps → step_count stuck forever)
+        self._training_step += 1
+        self._update_running_stats(s_t)
+
         # Skip update if not on step_frequency boundary (after warmup)
-        if self.step_count > self.warmup_steps and self.step_count % self.step_frequency != 0:
+        if self._training_step > self.warmup_steps and self._training_step % self.step_frequency != 0:
             u_t = torch.zeros(U_DIM, device=s_t.device)
-            h_bar = torch.zeros(7, device=s_t.device)
-            return lambda_t, u_t, h_bar
+            return lambda_t, u_t, self._cached_h_bar  # return last firing's h_bar for logging
 
         u_t, h_bar = self.compute_correction(s_t)
+        self._cached_h_bar = h_bar.detach().clone()  # cache for skipped steps
 
         # Add stochastic exploration noise (MATH.md M.6.3b)
         if self.noise_sigma > 0:
