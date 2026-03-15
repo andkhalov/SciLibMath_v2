@@ -1,8 +1,8 @@
 # HYPOTHESIS.md — Тестируемые гипотезы SciLibMath_v2
 
-> **Версия:** 1.0 | **Дата:** 2026-03-10
-> **Привязка:** MATH.md v2.6.2, TZ.md v1.6
-> **Sweep:** 5% данных, 3 эпохи, seed=42
+> **Версия:** 2.0 | **Дата:** 2026-03-15
+> **Привязка:** MATH.md v2.7.0, TZ.md v1.7
+> **Данные:** sweep4-10 (5%-20%, 3-5 эпох, seed=42)
 
 ---
 
@@ -74,24 +74,66 @@
 
 ---
 
-## Результаты (заполняется после sweep)
+## Результаты H1-H9 (кумулятивные по sweep4-10)
 
-_Placeholder: результаты будут добавлены после завершения sweep 5%/3ep._
+> Данные: 6 sweep'ов, 5%-20% данных, 3-5 эпох. Финальные числа из sweep10 (20%, 5ep, live controller).
 
 | ID | Подтверждена? | Ключевые числа | Комментарий |
 |----|---------------|----------------|-------------|
-| H1 | — | — | — |
-| H2 | — | — | — |
-| H3 | — | — | — |
-| H4 | — | — | — |
-| H5 | — | — | — |
-| H6 | — | — | — |
-| H7 | — | — | — |
-| H8 | — | — | — |
-| T3 | — | — | — |
-| T7 | — | — | — |
-| T9 | — | — | — |
+| H1 | **ОТВЕРГНУТА** | E2=0.092 << E1=0.471 | Centroid InfoNCE без регуляризации = катастрофа. Stable across 6 sweeps. |
+| H2 | **ПОДТВЕРЖДЕНА** | D_intra: E3=0.004 << E2=1.546 | Alignment+radial стабилизируют геометрию. Но E3<E1 по R@1. |
+| H3 | **ПОДТВЕРЖДЕНА** | E4=0.356 > E3=0.353 (+0.3pp) | Marginal improvement. Per-modality weights (lean/latex=1.5) помогают. |
+| H4 | **ОТВЕРГНУТА** | E5=0.353 ≈ E4=0.356 | LossMixer не улучшает. Gradient-based weights не видят collapse signals. |
+| H5 | **ПОДТВЕРЖДЕНА** | E6=0.381 > E5=0.353 (+2.8pp) | Fuzzy > LossMixer. Controller видит state signals (даже с малым drift). |
+| H6 | **ОТВЕРГНУТА** | E7=0.380 ≈ E6=0.381 | Lyapunov penalty не даёт пользы. V_t penalty слишком мал при α=0.001. |
+| H7 | **ПОДТВЕРЖДЕНА** | A>B: +2.4pp (E1), +3.3pp (E3), +3.5pp (E4) | Separate encoders лучше. Gap в latex↔lean (-12pp у Family B). |
+| H8 | **ОТВЕРГНУТА** | B хуже и по centroid, и по cross-modal | Family B хуже во всём. Shared encoder теряет модальную специфику. |
+| H9 | **ПОДТВЕРЖДЕНА** | E6 loss=2.3 (vs 11.9 old), cm_R@1=0.381 | Variant D стабилен. Детерминированный T-S crashed (EXP-001). |
+| T3 | **Не применимо** | D_inter/D_intra ratio varies | Нужен полный train для надёжной проверки |
+| T7 | **ЧАСТИЧНО** | E1 img backbone norm >> text | Pairwise E1 обучает img сильнее (выше weight_norm). Centroid — равномернее. |
+| T9 | **Не применимо** | — | Нужен полный train с отдельным val set |
 
 ---
 
-*HYPOTHESIS.md v1.0 | SciLibMath_v2 | 2026-03-10*
+### Гипотезы EXP-007: H31-H40 (sweep10, live controller)
+
+> Зафиксированы до sweep10, проверены после. Ref: DIARY.md 2026-03-14.
+
+| ID | Гипотеза | Вердикт | Доказательство |
+|----|----------|---------|----------------|
+| **H31** | Живой E6 > мёртвый E6 (sweep7: 0.419) | **ОТВЕРГНУТА** | E6=0.381 < 0.419. α=0.001 слишком мал, drift ±0.001-0.008 |
+| **H32** | E8c (nonlinear) > E6 (linear) | **ОТВЕРГНУТА** | E8c=0.376 < E6=0.381 |
+| **H33** | E8c_low_va = best overall | **ОТВЕРГНУТА** | E8c_low_va=0.376, E1=0.471 best |
+| **H34** | E7 > E6 при живом контроллере | **ОТВЕРГНУТА** | E7=0.380 ≈ E6=0.381 |
+| **H35** | E9 > E3 по D_intra | **ПОДТВЕРЖДЕНА** | D_intra: E9=0.011 vs E3=0.004 (+175%) |
+| **H36** | E10 > E9 | **ПОДТВЕРЖДЕНА** | E10=0.397 > E9=0.371 (+2.6pp) |
+| **H37** | Family A > B на 2-4pp | **ПОДТВЕРЖДЕНА** | E1: +2.4pp, E3: +3.3pp, E4: +3.5pp |
+| **H38** | Lambda trajectory нестационарна | **ЧАСТИЧНО** | Нестационарна, но drift ±0.001-0.008 — слабо |
+| **H39** | Rule activations > 0 после warmup | **ПОДТВЕРЖДЕНА** | 1444 controller events за sweep |
+| **H40** | E5 < E6 | **ПОДТВЕРЖДЕНА** | E5=0.353 < E6=0.381 (+2.8pp) |
+
+**Итог H31-H40:** 5 подтверждено, 4 отвергнуто, 1 частично.
+
+---
+
+### Гипотезы EXP-008: H41-H50 (sweep11, зафиксированы до запуска)
+
+> Ref: MATH.md v2.8.0, EXP-008 plan
+> NOTE: H41-H45 переформулированы — вместо OCR encoder используется ConvNeXt-Pico backbone (см. DIARY 2026-03-15 ~22:00)
+
+| ID | Гипотеза | Метрика | Ожидание | Ref |
+|----|----------|---------|----------|-----|
+| **H41** | ConvNeXt-Pico backbone улучшает img→text retrieval vs ResNet18 | img→lat R@1 | E1_cnxt > E1 (0.39) | M.1.2c |
+| **H42** | ConvNeXt backbone улучшает cm_R@1 в pairwise | cm_R@1 | E1_cnxt > E1 (0.47) | M.1.2c |
+| **H43** | ConvNeXt backbone улучшает centroid-based | cm_R@1 | E10_cnxt > E10 (0.40) | M.1.2c |
+| **H44** | ConvNeXt + controller > ConvNeXt без controller | cm_R@1 | E6_cnxt > E3_cnxt | M.6, M.1.2c |
+| **H45** | ConvNeXt эффект сильнее для centroid чем pairwise | Δcm_R@1 | (E10_cnxt-E10) > (E1_cnxt-E1) | M.1.2c |
+| **H46** | L_va curriculum снижает VA доминирование | L_va/L_total step 5K | < 50% (было 79%) | M.2.4 |
+| **H47** | α×5 / γ÷5 усиливает контроллер | lambda drift range | > ±0.05 (было ±0.008) | M.6.3b |
+| **H48** | α×5 / γ÷5 улучшает E6 vs E4 | E6-E4 cm_R@1 | > +0.02 (было +0.025) | M.6.3b |
+| **H49** | final_div_factor=10 убирает weight norm plateau | weight_norm last step | > weight_norm at step 10K | — |
+| **H50** | Combined fixes (B+C+D) улучшают centroid-based | E10 cm_R@1 | > 0.42 (было 0.397) | — |
+
+---
+
+*HYPOTHESIS.md v2.0 | SciLibMath_v2 | 2026-03-15*

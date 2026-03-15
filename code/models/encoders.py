@@ -10,6 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from transformers import AutoModel
 from torchvision import models as tv_models
+import timm
 
 
 class TextEncoder(nn.Module):
@@ -59,17 +60,21 @@ class TextEncoder(nn.Module):
 
 
 class VisualEncoder(nn.Module):
-    """Patch-based visual encoder: patches → ResNet18 → AlignNet → SciRus-tiny → pool.
+    """Patch-based visual encoder: patches → CNN backbone → AlignNet → SciRus-tiny → pool.
     Ref: MATH.md M.1.2
 
     Pipeline:
       Step 1: Extract patches [B, 1, H, W] → [B, K, 1, P, P]
-      Step 2: ResNet18 feature extraction per patch → [B, K, 512]
-      Step 3: AlignNet: Linear(512, d_text) + LayerNorm → [B, K, d_text]
+      Step 2: CNN feature extraction per patch → [B, K, cnn_dim]
+      Step 3: AlignNet: Linear(cnn_dim, d_text) + LayerNorm → [B, K, d_text]
       Step 4: SciRus-tiny(inputs_embeds) + masked mean pool → [B, d_text]
 
     Input: [B, 1, H=64, W_padded] grayscale images + widths [B].
     Output: [B, d_text] feature vector (pre-projection).
+
+    Supported backbones:
+      resnet18 (default, 512-dim, 11M), resnet50 (2048-dim, 23M),
+      convnext_tiny.fb_in22k (768-dim, 28M), or any timm model name.
     """
 
     def __init__(
@@ -88,47 +93,64 @@ class VisualEncoder(nn.Module):
         self.patch_stride = patch_stride
         self.freeze_resnet_layers = freeze_resnet_layers
 
-        # --- Step 2: ResNet18 feature extractor (no FC, no avgpool) ---
-        weights = "DEFAULT" if pretrained else None
-        if resnet_name == "resnet18":
-            resnet = tv_models.resnet18(weights=weights)
-            resnet_out_dim = 512
-        else:
-            resnet = tv_models.resnet50(weights=weights)
-            resnet_out_dim = 2048
+        # --- Step 2: CNN backbone for patch feature extraction ---
+        if resnet_name in ("resnet18", "resnet50"):
+            self._backbone_type = "resnet"
+            weights = "DEFAULT" if pretrained else None
+            if resnet_name == "resnet18":
+                resnet = tv_models.resnet18(weights=weights)
+                cnn_out_dim = 512
+            else:
+                resnet = tv_models.resnet50(weights=weights)
+                cnn_out_dim = 2048
 
-        # Replace first conv: 3 channels → 1 channel (grayscale)
-        old_conv = resnet.conv1
-        self.resnet_conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
-        if pretrained:
-            with torch.no_grad():
-                self.resnet_conv1.weight.copy_(old_conv.weight.mean(dim=1, keepdim=True))
+            # Replace first conv: 3 channels → 1 channel (grayscale)
+            old_conv = resnet.conv1
+            self.resnet_conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
+            if pretrained:
+                with torch.no_grad():
+                    self.resnet_conv1.weight.copy_(old_conv.weight.mean(dim=1, keepdim=True))
 
-        self.resnet_bn1 = resnet.bn1
-        self.resnet_relu = resnet.relu
-        self.resnet_maxpool = resnet.maxpool
-        self.resnet_layer1 = resnet.layer1
-        self.resnet_layer2 = resnet.layer2
-        self.resnet_layer3 = resnet.layer3
-        self.resnet_layer4 = resnet.layer4
-        self.resnet_pool = nn.AdaptiveAvgPool2d((1, 1))
+            self.resnet_bn1 = resnet.bn1
+            self.resnet_relu = resnet.relu
+            self.resnet_maxpool = resnet.maxpool
+            self.resnet_layer1 = resnet.layer1
+            self.resnet_layer2 = resnet.layer2
+            self.resnet_layer3 = resnet.layer3
+            self.resnet_layer4 = resnet.layer4
+            self.resnet_pool = nn.AdaptiveAvgPool2d((1, 1))
 
-        # Freeze early ResNet layers (EXP-003 Fix P3)
-        if freeze_resnet_layers >= 1:
-            for m in [self.resnet_conv1, self.resnet_bn1, self.resnet_layer1]:
-                for p in m.parameters():
+            # Freeze early ResNet layers (EXP-003 Fix P3)
+            if freeze_resnet_layers >= 1:
+                for m in [self.resnet_conv1, self.resnet_bn1, self.resnet_layer1]:
+                    for p in m.parameters():
+                        p.requires_grad = False
+            if freeze_resnet_layers >= 2:
+                for p in self.resnet_layer2.parameters():
                     p.requires_grad = False
-        if freeze_resnet_layers >= 2:
-            for p in self.resnet_layer2.parameters():
-                p.requires_grad = False
+        else:
+            # Modern CNN via timm (ConvNeXt, EfficientNet, etc.)
+            self._backbone_type = "timm"
+            self.cnn_backbone = timm.create_model(
+                resnet_name, pretrained=pretrained,
+                num_classes=0, in_chans=1,
+            )
+            cnn_out_dim = self.cnn_backbone.num_features
+
+            # Freeze early layers (approximate: freeze first N stages)
+            if freeze_resnet_layers >= 1 and hasattr(self.cnn_backbone, "stem"):
+                for p in self.cnn_backbone.stem.parameters():
+                    p.requires_grad = False
+            if freeze_resnet_layers >= 2 and hasattr(self.cnn_backbone, "stages"):
+                for p in self.cnn_backbone.stages[0].parameters():
+                    p.requires_grad = False
 
         # --- Step 3: AlignNet — MATH.md M.1.2 Step 3 ---
-        # Deeper MLP with GELU nonlinearity (EXP-003 Fix P2)
         text_backbone = AutoModel.from_pretrained(text_backbone_name)
         d_text = text_backbone.config.hidden_size  # 312 for sci-rus-tiny
 
         self.align_net = nn.Sequential(
-            nn.Linear(resnet_out_dim, align_hidden_dim),
+            nn.Linear(cnn_out_dim, align_hidden_dim),
             nn.GELU(),
             nn.LayerNorm(align_hidden_dim),
             nn.Dropout(align_dropout),
@@ -137,8 +159,7 @@ class VisualEncoder(nn.Module):
         )
 
         # --- Step 4: SciRus-tiny for visual token processing ---
-        # Separate instance — processes visual tokens via self-attention
-        self.transformer = text_backbone  # reuse loaded model
+        self.transformer = text_backbone
         self.d_text = d_text
         self.output_dim = d_text
 
@@ -176,25 +197,28 @@ class VisualEncoder(nn.Module):
 
         return patches, mask
 
-    def _resnet_forward(self, x: torch.Tensor) -> torch.Tensor:
-        """ResNet feature extraction (no FC).
+    def _backbone_forward(self, x: torch.Tensor) -> torch.Tensor:
+        """CNN feature extraction per patch.
 
         Args:
             x: [N, 1, P, P] patches
         Returns:
-            features: [N, 512] (resnet18) or [N, 2048] (resnet50)
+            features: [N, cnn_dim]
         """
-        x = self.resnet_conv1(x)
-        x = self.resnet_bn1(x)
-        x = self.resnet_relu(x)
-        x = self.resnet_maxpool(x)
-        x = self.resnet_layer1(x)
-        x = self.resnet_layer2(x)
-        x = self.resnet_layer3(x)
-        x = self.resnet_layer4(x)
-        x = self.resnet_pool(x)  # [N, C, 1, 1]
-        x = x.flatten(1)  # [N, C]
-        return x
+        if self._backbone_type == "resnet":
+            x = self.resnet_conv1(x)
+            x = self.resnet_bn1(x)
+            x = self.resnet_relu(x)
+            x = self.resnet_maxpool(x)
+            x = self.resnet_layer1(x)
+            x = self.resnet_layer2(x)
+            x = self.resnet_layer3(x)
+            x = self.resnet_layer4(x)
+            x = self.resnet_pool(x)  # [N, C, 1, 1]
+            x = x.flatten(1)  # [N, C]
+            return x
+        else:
+            return self.cnn_backbone(x)  # [N, cnn_dim]
 
     def forward(
         self, img: torch.Tensor, widths: torch.Tensor
@@ -236,12 +260,12 @@ class VisualEncoder(nn.Module):
         N_flat = flat_patches.size(0)
 
         if N_flat <= resnet_chunk_size:
-            flat_features = self._resnet_forward(flat_patches)  # [N_flat, 512]
+            flat_features = self._backbone_forward(flat_patches)  # [N_flat, 512]
         else:
             chunks = []
             for start in range(0, N_flat, resnet_chunk_size):
                 end = min(start + resnet_chunk_size, N_flat)
-                chunks.append(self._resnet_forward(flat_patches[start:end]))
+                chunks.append(self._backbone_forward(flat_patches[start:end]))
             flat_features = torch.cat(chunks, dim=0)
 
         patch_features = flat_features.view(B, K, -1)  # [B, K, 512]

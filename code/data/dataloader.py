@@ -17,7 +17,7 @@ class MultimodalCollator:
     """Collates multimodal samples into batched tensors.
 
     Text modalities → tokenized (input_ids, attention_mask).
-    Image modality → padded to max width.
+    Image modality → padded to max width in batch.
     Supports per-modality tokenizers (MATH.md M.2.3).
     """
 
@@ -31,10 +31,8 @@ class MultimodalCollator:
         self._text_keys = ["en", "ru", "lean", "latex"]
 
         if tokenizers is not None:
-            # Per-modality tokenizers (from prepare_tokenizers)
             self._tokenizers = {k: tokenizers[k] for k in self._text_keys}
         else:
-            # Single shared tokenizer (backward-compatible)
             tok = AutoTokenizer.from_pretrained(tokenizer_name)
             self._tokenizers = {k: tok for k in self._text_keys}
 
@@ -54,7 +52,7 @@ class MultimodalCollator:
             batch[f"{key}_input_ids"] = encoded["input_ids"]
             batch[f"{key}_attention_mask"] = encoded["attention_mask"]
 
-        # Pad images to same width
+        # Batch images: pad to max width
         images = [s["img"] for s in samples]
         batch["img"], batch["img_widths"] = pad_image_batch(images)
 
@@ -87,7 +85,6 @@ def create_dataloaders(
     Returns:
         (train_loader, test_loader, dataset_size)
     """
-    # Full dataset (loaded once, then split by indices)
     full_ds = SciLibModalDataset(data_dir=data_dir, image_root=image_root)
     n = len(full_ds)
 
@@ -105,7 +102,6 @@ def create_dataloaders(
     test_idx = indices[:n_test].tolist()
     train_idx = indices[n_test:].tolist()
 
-    # Use Subset to avoid reloading Arrow data
     train_ds = torch.utils.data.Subset(full_ds, train_idx)
     test_ds = torch.utils.data.Subset(full_ds, test_idx)
 

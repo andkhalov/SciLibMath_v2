@@ -41,7 +41,7 @@ class SciLibModalDataset(Dataset):
         data_dir = Path(data_dir)
         image_root = Path(image_root) if image_root else data_dir / "img"
 
-        # Load HuggingFace dataset
+        # Load HuggingFace dataset (grayscale PIL images)
         img_cfg = ImageLoadingConfig(
             image_root=image_root,
             mode="pil",
@@ -91,7 +91,6 @@ class SciLibModalDataset(Dataset):
                     img = self._image_transform(img)
                 sample["img"] = img
             else:
-                # Create dummy image tensor [1, 64, 64]
                 sample["img"] = torch.zeros(1, 64, 64)
 
         return sample

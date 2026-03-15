@@ -1,6 +1,6 @@
 # MATH.md — Полная математическая формализация SciLibMath_v2
 
-> **Версия:** 2.7.0 | **Фаза:** 3 | **Дата:** 2026-03-14
+> **Версия:** 2.8.0 | **Фаза:** 3 | **Дата:** 2026-03-15
 > **Стиль:** PoC (proof-of-concept) — все выводы явные, никаких "очевидно следует"
 > **Papers:** A (M.0-M.2), B (M.3-M.4), C (M.5-M.8)
 
@@ -147,6 +147,30 @@ $$e_i^{\text{img}} = g_{\text{img}}(\bar{h}_{\text{img}}) \in \mathbb{R}^d$$
 
 **[Assumption A.3]** Mean pooling вместо CLS-токена, потому что нет фиксированного "начала" формулы — информация распределена по всей длине. При overlapping patches (Шаг 1) mean pooling дополнительно выполняет функцию **устранения избыточности**: признаки из полосы перекрытия, дублированные в двух соседних патчах, усредняются при агрегации, а не накапливаются.
 
+### M.1.2c ConvNeXt Visual Backbone (backbone ablation)
+
+**[Определение M.1.2c — ConvNeXt Backbone Swap]**
+
+Замена ResNet18 на современный ConvNeXt-Pico backbone в существующем patch-based pipeline (M.1.2). Архитектура pipeline **не меняется** — заменяется только CNN backbone на шаге 2.
+
+**Pipeline (идентичен M.1.2, шаг 2 изменён):**
+
+| Шаг | Вход | Операция | Выход |
+|-----|------|----------|-------|
+| 1 | $\text{img}_i \in \mathbb{R}^{1 \times H \times W}$ | Extract patches $(p, s) = (64, 32)$ | $\{P_k\}_{k=1}^{K}, \; P_k \in \mathbb{R}^{1 \times 64 \times 64}$ |
+| 2 | $P_k$ | **ConvNeXt-Pico** (timm, `convnext_pico.d1_in1k`, in_chans=1) | $\mathbf{h}_k \in \mathbb{R}^{512}$ |
+| 3 | $\{\mathbf{h}_k\}$ | AlignNet$(512 \to d'_m)$: GELU + LayerNorm | $\{\tilde{\mathbf{h}}_k\} \in \mathbb{R}^{K \times d'_m}$ |
+| 4 | $\{\tilde{\mathbf{h}}_k\}$ | SciRus-tiny (inputs_embeds) + mean pool | $\mathbf{z}_{\text{img}} \in \mathbb{R}^{d'_m}$ |
+
+**[Отличия от ResNet18 (M.1.2):]**
+- Архитектура: ConvNeXt (inverted bottleneck, depthwise conv, LayerNorm) vs стандартный ResNet
+- Параметры: ~8.5M (ConvNeXt-Pico) vs ~11M (ResNet18) — легче
+- Выходная размерность: 512 (одинаковая) — AlignNet и downstream не меняются
+- Pretrained: ImageNet-1K (d1_in1k)
+- Патч-based pipeline сохранён: переменная ширина изображений обрабатывается корректно
+
+**[Assumption A.13]** Современная CNN архитектура (ConvNeXt) обеспечивает лучшее качество признаков при меньшем количестве параметров за счёт design improvements (depthwise conv, larger kernel, GELU, LayerNorm) по сравнению с классической ResNet18.
+
 ### M.1.2* Auxiliary Visual Alignment Loss ($\mathcal{L}_{\text{visual\_align}}$)
 
 **[Определение M.1.2*]**
@@ -278,6 +302,18 @@ $$\mathbf{e}_{t_{\text{new}}} = \frac{1}{k} \sum_{i=1}^{k} \mathbf{e}_{t_i}$$
 - Projection heads, AlignNet: $\text{lr}_{\text{head}} = \text{lr}$
 
 **[Assumption A.12]** Discriminative LR: $\text{lr\_embed\_ratio} = 0.1$. Все слои обучаемы.
+
+### M.2.4b $\lambda_{\text{va}}$ Curriculum Scheduling [Paper A, EXP-008]
+
+**[Проблема]** $\mathcal{L}_{\text{visual\_align}}$ доминирует: 75-79% total loss budget (sweep10). Визуальный alignment забирает почти все градиенты в начале обучения, замедляя кросс-модальное выравнивание.
+
+**[Решение]** Curriculum scheduling для $\lambda_{\text{va}}$:
+
+$$\lambda_{\text{va}}^{\text{eff}}(t) = \begin{cases} 0 & \text{if } t < t_{\text{warmup}} \\ \frac{t - t_{\text{warmup}}}{t_{\text{ramp}}} \cdot \lambda_{\text{va}} & \text{if } t_{\text{warmup}} \leq t < t_{\text{warmup}} + t_{\text{ramp}} \\ \lambda_{\text{va}} & \text{if } t \geq t_{\text{warmup}} + t_{\text{ramp}} \end{cases}$$
+
+Гиперпараметры: $t_{\text{warmup}} = 500$, $t_{\text{ramp}} = 200$.
+
+**[Интуиция]** Первые 500 шагов — обучение кросс-модального выравнивания без визуального alignment. Затем плавный ввод $\mathcal{L}_{\text{va}}$ за 200 шагов.
 
 ---
 
@@ -881,8 +917,8 @@ $$\mathbf{u}_t = \mathbf{u}_t^{\det} + \boldsymbol{\varepsilon}_t$$
 $$\boldsymbol{\lambda}_{t+1} = \Pi_\Lambda\bigl(\boldsymbol{\lambda}_t + \alpha \cdot \mathbf{u}_t + \gamma \cdot (\boldsymbol{\lambda}_0 - \boldsymbol{\lambda}_t)\bigr)$$
 
 где:
-- $\alpha = 0.001$ — шаг контроллера (reduced from $0.01$)
-- $\gamma = 0.01$ — коэффициент elastic mean-reversion к $\boldsymbol{\lambda}_0$
+- $\alpha = 0.005$ — шаг контроллера (EXP-008: increased from $0.001$; E8c uses $\alpha = 0.01$)
+- $\gamma = 0.002$ — коэффициент elastic mean-reversion к $\boldsymbol{\lambda}_0$ (EXP-008: reduced from $0.01$, $\alpha/\gamma = 2.5$)
 - $\sigma_0 = 0.01$ — начальная дисперсия стохастического шума
 - $\boldsymbol{\lambda}_0$ — default значения гиперпараметров (начальная точка из конфигурации)
 - $\Lambda$ — сужённые bounds: $w_m \in [0.3, 3.0]$ (was $[0.1, 5.0]$)

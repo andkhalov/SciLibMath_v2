@@ -54,7 +54,8 @@ class FamilyA(nn.Module):
                 vocab_size=_vocab_sizes.get(mod),
             )
 
-        # Visual encoder (MATH.md M.1.2) with deeper AlignNet + freeze (EXP-003)
+        # Visual encoder: patches → CNN → AlignNet → SciRus-tiny (MATH.md M.1.2)
+        # visual_backbone selects CNN: resnet18, resnet50, convnext_tiny.fb_in22k, etc.
         self.visual_encoder = VisualEncoder(
             text_backbone_name=text_backbone,
             resnet_name=visual_backbone,

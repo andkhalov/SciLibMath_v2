@@ -1,6 +1,10 @@
-# E8c (active nonlinear) + lambda_va=0.01: Combo of two best findings
-# EXP-006: nonlinear MLP + reduced VA dominance
-experiment: e8c_low_va
+# E8c ConvNeXt: Nonlinear T-S controller + ConvNeXt-Tiny backbone
+# Ref: MATH.md M.1.2, M.3.8
+# EXP-008: α=0.01 (kept from e8c), γ=0.002 (÷5)
+experiment: e8c_active_cnxt
+
+model:
+  visual_backbone: convnext_pico.d1_in1k
 
 loss:
   type: composite
@@ -9,7 +13,7 @@ loss:
   lambda_align: 0.3
   lambda_rad: 0.1
   lambda_reg: 0.05
-  lambda_va: 0.01             # CHANGED: 0.1→0.01
+  lambda_va: 0.1
   w_g: 1.0
   C_clip: 10.0
   rho: 0.1
@@ -25,12 +29,12 @@ loss:
     img: 1.0
 
 controller:
-  alpha: 0.01               # kept (E8c differentiator)
+  alpha: 0.01
   warmup_steps: 200
   step_frequency: 10
   noise_sigma: 0.01
   noise_anneal: true
-  elastic_gamma: 0.002      # EXP-008: ÷5 from 0.01
+  elastic_gamma: 0.002
   nonlinear_consequents: true
   consequent_hidden: 32
   init_scale: 0.1

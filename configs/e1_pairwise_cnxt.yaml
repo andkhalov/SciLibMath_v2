@@ -1,0 +1,11 @@
+# E1 ConvNeXt: Pairwise InfoNCE baseline with ConvNeXt-Tiny backbone
+# Ref: MATH.md M.1.2, M.3.1
+experiment: e1_pairwise_cnxt
+
+model:
+  visual_backbone: convnext_pico.d1_in1k
+
+loss:
+  type: pairwise
+  tau: 0.07
+  lambda_va: 0.1

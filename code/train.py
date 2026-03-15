@@ -40,7 +40,7 @@ def build_loss_fn(cfg):
     exp = cfg.experiment
     loss_cfg = cfg.loss
 
-    if exp in ("e1_pairwise", "e1b_pairwise"):
+    if exp in ("e1_pairwise", "e1b_pairwise", "e1_pairwise_cnxt"):
         return PairwiseInfoNCE(tau=loss_cfg.tau), "pairwise"
 
     elif exp in ("e2_centroid", "e2b_centroid"):
@@ -56,7 +56,11 @@ def build_loss_fn(cfg):
                  "e3c_low_va", "e6c_low_va", "e8c_active",
                  "e10c_low_va",
                  "e6_rho03", "e8c_rho03", "e8c_low_va",
-                 "e8c_rho03_low_va", "e8c_boost"):
+                 "e8c_rho03_low_va", "e8c_boost",
+                 # ConvNeXt backbone variants
+                 "e3_centroid_reg_cnxt", "e4_composite_static_cnxt",
+                 "e6_fuzzy_cnxt", "e7_lyapunov_cnxt", "e8c_active_cnxt",
+                 "e10_potential_fuzzy_cnxt", "e8c_low_va_cnxt"):
         weights = dict(loss_cfg.get("weights", {}))
         use_potential = loss_cfg.get("use_potential", False)
         return CompositeLoss(
@@ -80,7 +84,8 @@ def build_loss_fn(cfg):
             contrast_weight=loss_cfg.get("contrast_weight", 1.0),
         ), "composite"
 
-    elif exp in ("e5_composite_learnable", "e9_potential"):
+    elif exp in ("e5_composite_learnable", "e9_potential",
+                 "e5_composite_learnable_cnxt", "e9_potential_cnxt"):
         use_potential = loss_cfg.get("use_potential", False)
         return CompositeLoss(
             tau=loss_cfg.tau,
@@ -300,7 +305,10 @@ def main():
     if cfg.experiment in ("e6_fuzzy", "e7_lyapunov", "e8_nonlinear", "e10_potential_fuzzy",
                           "e6c_low_va", "e8c_active", "e10c_low_va",
                           "e6_rho03", "e8c_rho03", "e8c_low_va",
-                          "e8c_rho03_low_va", "e8c_boost"):
+                          "e8c_rho03_low_va", "e8c_boost",
+                          # ConvNeXt backbone with controller
+                          "e6_fuzzy_cnxt", "e7_lyapunov_cnxt", "e8c_active_cnxt",
+                          "e10_potential_fuzzy_cnxt", "e8c_low_va_cnxt"):
         ctrl_cfg = cfg.get("controller", {})
         total_training_steps = len(train_loader) * cfg.training.epochs
         controller = TSFuzzyController(
@@ -318,7 +326,7 @@ def main():
         )
         state_tracker = StateTracker(beta=0.99, device=device)
 
-    if cfg.experiment == "e7_lyapunov":
+    if cfg.experiment in ("e7_lyapunov", "e7_lyapunov_cnxt"):
         lyap_cfg = cfg.get("lyapunov", {})
         lyapunov = LyapunovRegularizer(
             alpha=lyap_cfg.get("alpha", 1.0),
@@ -354,11 +362,13 @@ def main():
     warmup_steps = cfg.training.get("warmup_steps", 500)
 
     pct_start = min(warmup_steps / total_steps, 0.3) if total_steps > 0 else 0.1
+    final_div = cfg.training.get("final_div_factor", 10)
     scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer,
         max_lr=[pg["lr"] for pg in param_groups],
         total_steps=total_steps,
         pct_start=pct_start,
+        final_div_factor=final_div,
     )
 
     # Mixed precision
@@ -397,8 +407,14 @@ def main():
     else:
         step_fn = train_step_composite
 
+    # L_va curriculum scheduling (MATH.md M.2.4, EXP-008)
+    va_warmup_steps = cfg.training.get("va_warmup_steps", 0)
+    va_ramp_steps = cfg.training.get("va_ramp_steps", 0)
+
     # ==================== Training Loop ====================
     print(f"\nStarting training: {cfg.training.epochs} epochs, {len(train_loader)} steps/epoch")
+    if va_warmup_steps > 0:
+        print(f"L_va curriculum: warmup={va_warmup_steps}, ramp={va_ramp_steps}")
     eval_every = cfg.eval.get("eval_every_steps", 200)
     prev_lambda = None
 
@@ -412,6 +428,16 @@ def main():
 
             # Move to device
             batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
+
+            # L_va curriculum scheduling (MATH.md M.2.4)
+            if va_warmup_steps > 0 and hasattr(loss_fn, "set_va_scale"):
+                if global_step < va_warmup_steps:
+                    va_scale = 0.0
+                elif va_ramp_steps > 0 and global_step < va_warmup_steps + va_ramp_steps:
+                    va_scale = (global_step - va_warmup_steps) / va_ramp_steps
+                else:
+                    va_scale = 1.0
+                loss_fn.set_va_scale(va_scale)
 
             # Forward + loss
             optimizer.zero_grad()

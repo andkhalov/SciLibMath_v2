@@ -25,12 +25,12 @@ loss:
     img: 1.0
 
 controller:
-  alpha: 0.001            # step size (reduced from 0.05)
-  warmup_steps: 200       # increased from 50
-  step_frequency: 10      # apply controller every K steps
-  noise_sigma: 0.01       # stochastic exploration noise
-  noise_anneal: true      # linear σ annealing
-  elastic_gamma: 0.01     # mean-reversion coefficient
+  alpha: 0.005            # EXP-008: 5× from 0.001
+  warmup_steps: 200
+  step_frequency: 10
+  noise_sigma: 0.01
+  noise_anneal: true
+  elastic_gamma: 0.002    # EXP-008: ÷5 from 0.01
 
 lyapunov:
   alpha: 1.0              # V_t weight for normalized loss

@@ -65,6 +65,11 @@ training:
   warmup_steps: 500
   gradient_clip: 1.0
   gradient_accumulation_steps: 1
+  # L_va curriculum scheduling (MATH.md M.2.4, EXP-008)
+  va_warmup_steps: 500    # L_va = 0 during first 500 steps
+  va_ramp_steps: 200      # linear ramp 0→λ_va over next 200 steps
+  # LR schedule (EXP-008)
+  final_div_factor: 10    # OneCycleLR final LR = max_lr / final_div_factor (default was 1e4)
 
 # --- Evaluation (TZ.md Sec 9) ---
 eval:

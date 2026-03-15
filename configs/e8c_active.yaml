@@ -27,12 +27,12 @@ loss:
     img: 1.0
 
 controller:
-  alpha: 0.01               # CHANGED: 0.001→0.01 (10× larger step)
+  alpha: 0.01               # kept (E8c differentiator — 10× larger step)
   warmup_steps: 200
   step_frequency: 10
   noise_sigma: 0.01
   noise_anneal: true
-  elastic_gamma: 0.01
+  elastic_gamma: 0.002      # EXP-008: ÷5 from 0.01 (α/γ=5.0)
   nonlinear_consequents: true
   consequent_hidden: 32
-  init_scale: 0.1            # CHANGED: 0.01→0.1 (10× larger init)
+  init_scale: 0.1

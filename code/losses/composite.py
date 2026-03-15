@@ -77,6 +77,9 @@ class CompositeLoss(nn.Module):
         self.tau_min = tau_min
         self.tau_max = tau_max
 
+        # L_va curriculum scaling (MATH.md M.2.4, EXP-008)
+        self._va_scale = 1.0
+
         # Per-modality weights (default uniform)
         default_w = {m: 1.0 for m in MODALITIES}
         self.modality_weights = modality_weights or default_w
@@ -203,8 +206,8 @@ class CompositeLoss(nn.Module):
             result[f"loss_{mod}_reg"] = personal_reg
 
         # --- Total ---
-        # MATH.md M.3.4*: L = w_g * L_global + L_personal + λ_va * L_va
-        L_total = self.w_g * L_global + L_personal + self.lambda_va * visual_align_loss
+        # MATH.md M.3.4*: L = w_g * L_global + L_personal + λ_va * va_scale * L_va
+        L_total = self.w_g * L_global + L_personal + self.lambda_va * self._va_scale * visual_align_loss
 
         result["loss"] = L_total
         result["loss_global"] = L_global
@@ -258,3 +261,7 @@ class CompositeLoss(nn.Module):
         self.modality_weights["latex"] = lam[8].item()
         self.modality_weights["img"] = lam[9].item()
         self.w_g = lam[10].item()
+
+    def set_va_scale(self, scale: float):
+        """Scale λ_va for curriculum scheduling (MATH.md M.2.4). scale ∈ [0, 1]."""
+        self._va_scale = scale

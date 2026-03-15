@@ -1,10 +1,9 @@
 #!/bin/bash
-# run_ablation.sh — Sequential ablation sweep E1-E7 + E1b-E4b on 10% data
+# run_ablation.sh — Sequential ablation sweep
 # Usage: bash run_ablation.sh [SWEEP_NAME]
 #   SWEEP_NAME defaults to "sweep" if not provided
 #
 # Ref: MATH.md M.3, TZ.md Sec 6
-# Each experiment runs 3 epochs on 10% of data with batch_size=64.
 # Results go to runs/ (TensorBoard), checkpoints/ (best models).
 
 set -euo pipefail
@@ -12,77 +11,58 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# Sweep name for log prefix (e.g., sweep5)
+# Sweep name for log prefix (e.g., sweep11)
 SWEEP_NAME="${1:-sweep}"
 
 # Activate venv
 source "$SCRIPT_DIR/venv/bin/activate"
 
-# Ablation overrides
-# bs=64: safe for RTX 3090 24GB with 5×SciRus-tiny + patch-based visual pipeline.
-# bs=128 OOMs on worst-case batches (W=1200, K=37 patches × 128 = 4736 ResNet forwards + 5 transformer backwards).
-OVERRIDES="data.dataset_fraction=0.2 data.batch_size=64 data.num_workers=8 training.epochs=5 eval.eval_every_steps=200"
+# Ablation overrides (EXP-008: 5% data, 5 epochs)
+OVERRIDES="data.dataset_fraction=0.05 data.batch_size=64 data.num_workers=8 training.epochs=5 eval.eval_every_steps=200"
 
-# Family A experiments
+# Family A experiments (10)
 EXPERIMENTS_A=(
     e1_pairwise
-    e2_centroid
     e3_centroid_reg
     e4_composite_static
     e5_composite_learnable
     e6_fuzzy
     e7_lyapunov
-    e8_nonlinear
+    e8c_active
     e9_potential
     e10_potential_fuzzy
+    e8c_low_va
 )
 
-# Family B experiments
+# Family B experiments (3)
 EXPERIMENTS_B=(
     e1b_pairwise
-    e2b_centroid
     e3b_centroid_reg
     e4b_composite_static
 )
 
-# Family C experiments (calibration variants, EXP-005)
-EXPERIMENTS_C=(
-    e3c_low_va
-    e6c_low_va
-    e10c_low_va
-    e8c_active
+# ConvNeXt-Tiny backbone (10) — EXP-008
+EXPERIMENTS_CNXT=(
+    e1_pairwise_cnxt
+    e3_centroid_reg_cnxt
+    e4_composite_static_cnxt
+    e5_composite_learnable_cnxt
+    e6_fuzzy_cnxt
+    e7_lyapunov_cnxt
+    e8c_active_cnxt
+    e9_potential_cnxt
+    e10_potential_fuzzy_cnxt
+    e8c_low_va_cnxt
 )
 
-# EXP-006: rho=0.3, combos, contrast boost
-EXPERIMENTS_D=(
-    e6_rho03
-    e8c_rho03
-    e8c_low_va
-    e8c_rho03_low_va
-    e8c_boost
+# EXP-008 (sweep11): Family A + Family B + ConvNeXt, 23 experiments
+EXPERIMENTS_F=(
+    "${EXPERIMENTS_A[@]}"
+    "${EXPERIMENTS_B[@]}"
+    "${EXPERIMENTS_CNXT[@]}"
 )
 
-# EXP-007 (sweep10): Full ablation — both families, fixed controller, 14 experiments
-# Family A: E1-E10 + E8c_low_va (11)
-# Family B: E1b, E3b, E4b (3)
-EXPERIMENTS_E=(
-    e1_pairwise
-    e2_centroid
-    e3_centroid_reg
-    e4_composite_static
-    e5_composite_learnable
-    e6_fuzzy
-    e7_lyapunov
-    e8c_active
-    e9_potential
-    e10_potential_fuzzy
-    e8c_low_va
-    e1b_pairwise
-    e3b_centroid_reg
-    e4b_composite_static
-)
-
-ALL_EXPERIMENTS=("${EXPERIMENTS_E[@]}")
+ALL_EXPERIMENTS=("${EXPERIMENTS_F[@]}")
 
 # Create logs dir
 mkdir -p logs
@@ -91,7 +71,7 @@ mkdir -p logs
 bash "$SCRIPT_DIR/start_tensorboard.sh" 2>/dev/null || true
 echo ""
 
-echo "=== SciLibMath_v2 Ablation Sweep ($SWEEP_NAME, 10% data, 3 epochs) ==="
+echo "=== SciLibMath_v2 Ablation Sweep ($SWEEP_NAME) ==="
 echo "Experiments: ${ALL_EXPERIMENTS[*]}"
 echo "Total: ${#ALL_EXPERIMENTS[@]} experiments"
 echo "Overrides: $OVERRIDES"
