@@ -55,7 +55,7 @@ class FamilyA(nn.Module):
             )
 
         # Visual encoder: patches → CNN → AlignNet → SciRus-tiny (MATH.md M.1.2)
-        # visual_backbone selects CNN: resnet18, resnet50, convnext_tiny.fb_in22k, etc.
+        # visual_backbone selects CNN: resnet18, resnet50, convnext_pico.d1_in1k, etc.
         self.visual_encoder = VisualEncoder(
             text_backbone_name=text_backbone,
             resnet_name=visual_backbone,

@@ -74,7 +74,7 @@ class VisualEncoder(nn.Module):
 
     Supported backbones:
       resnet18 (default, 512-dim, 11M), resnet50 (2048-dim, 23M),
-      convnext_tiny.fb_in22k (768-dim, 28M), or any timm model name.
+      convnext_pico.d1_in1k (512-dim, 8.5M), or any timm model name.
     """
 
     def __init__(
