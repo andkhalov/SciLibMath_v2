@@ -1,42 +1,196 @@
-# SciLibMath_v2
+# SciLibMath v2
 
-Multimodal contrastive learning for mathematical objects across 5 modalities (en, ru, lean, latex, img) with centroid geometry, fuzzy T-S controller, and Lyapunov stability constraints.
+Мультимодальное контрастивное обучение для математических объектов.
 
-## Quick Start
+5 модальностей (English, Russian, Lean 4, LaTeX, Images) в едином векторном пространстве с центроидной геометрией, нечётким T-S контроллером и ограничениями устойчивости по Ляпунову.
 
-```bash
-# Setup environment
-bash init.sh
+---
 
-# Activate
-source venv/bin/activate
+## Мотивация
 
-# Run experiment (e.g. E4: composite loss, static weights)
-python code/train.py --config configs/e4_composite_static.yaml
+Математические объекты (леммы, теоремы, определения) существуют одновременно в нескольких символических системах: естественный язык (EN/RU), формальный язык (Lean 4), нотация (LaTeX), визуальное представление (коммутативные диаграммы, графы). Существующие модели (CLIP, ImageBind) работают с 2 модальностями или не учитывают специфику математического текста.
+
+SciLibMath v2 строит **единое векторное пространство** для 5 модальностей, где семантически эквивалентные объекты располагаются близко, а геометрия пространства контролируется нечётким контроллером.
+
+### Три публикации
+
+| Статья | Фокус | Статус |
+|--------|-------|--------|
+| **Paper A** | Датасет SciLibModal v2 + архитектура (Family A vs B) | В работе |
+| **Paper B** | Simplex Embedding — центроидное контрастивное обучение для M>2 модальностей | В работе |
+| **Paper C** | Нейро-символьный контроль — нечёткий T-S контроллер + устойчивость по Ляпунову | В работе |
+
+---
+
+## Датасет
+
+**SciLibRuModal v2** — 972,711 мультимодальных математических объектов.
+
+Источник: формализованная библиотека Mathlib (Lean 4), обработанная платформой SciLib. Каждый объект содержит до 5 представлений:
+
+| Модальность | Описание | Пример |
+|-------------|----------|--------|
+| `en` | Описание на английском | "Every natural number greater than 1 has a prime divisor" |
+| `ru` | Описание на русском | "Каждое натуральное число больше 1 имеет простой делитель" |
+| `lean` | Формальный код Lean 4 | `theorem Nat.exists_prime_and_dvd ...` |
+| `latex` | LaTeX-нотация | `$\forall n > 1, \exists p \text{ prime}, p \mid n$` |
+| `img` | Визуальное представление | Рендер LaTeX-формулы (PNG) |
+
+Автоматическая загрузка с S3 через `init.sh`.
+
+---
+
+## Архитектура
+
+### Family A — 5 отдельных энкодеров
+
+Каждая модальность имеет свой энкодер, проецирующий в общее пространство размерности `d=312`:
+
+| Модальность | Backbone | Параметры |
+|-------------|----------|-----------|
+| `en` | SciRus-tiny (frozen) + projection | ~16M |
+| `ru` | SciRus-tiny (frozen) + projection | ~16M |
+| `lean` | Custom tokenizer + encoder | ~8M |
+| `latex` | Custom tokenizer + encoder | ~8M |
+| `img` | ResNet18 / ConvNeXt-Pico + AlignNet | ~11M / ~9M |
+
+### Family B — 2 shared-энкодера
+
+- 1 общий текстовый энкодер для `en`, `ru`, `lean`, `latex` (с language token)
+- 1 визуальный энкодер для `img`
+
+Family B стабильно на 1–2 pp ниже Family A по cm_R@1.
+
+### Центроидная геометрия
+
+Для объекта с M доступных модальностей центроид:
+
+```
+c = (1/M) * Σ f_m(x_m)
 ```
 
-## Experiments
+Центроид используется как якорь в контрастивном обучении (вместо произвольного выбора пары как в CLIP).
 
-| ID | Name | Description |
-|----|------|-------------|
-| E1 | Pairwise InfoNCE | CLIP-style baseline, all C(5,2)=10 pairs |
-| E2 | Centroid InfoNCE | Centroid as anchor |
-| E3 | Centroid + Reg | + alignment + radial regularization |
-| E4 | Composite Static | Full loss, static weights |
-| E5 | LossMixer | MLP-learned weights |
-| E6 | Fuzzy T-S | Fuzzy controller for weights |
-| E7 | + Lyapunov | E6 + Lyapunov stability constraint |
+---
 
-## Formalization
+## Режимы обучения (Loss Functions)
 
-Mathematical specification: `writing/MATH.md` v2.6.2 (frozen reference).
+10 вариантов функции потерь, от базового до полностью контролируемого:
 
-## Dataset
+### Базовые (без контроллера)
 
-SciLibRuModal v2: 972,711 multimodal mathematical objects.
-Auto-downloaded by `init.sh` from S3.
+| ID | Название | Описание |
+|----|----------|----------|
+| **E1** | Pairwise InfoNCE | CLIP-style, все C(5,2)=10 пар модальностей |
+| **E2** | Centroid InfoNCE | Центроид как якорь, модальности → центроид |
+| **E3** | Centroid + Reg | E2 + alignment loss + radial regularization |
+| **E4** | Composite Static | Полная функция потерь, статические веса |
+| **E5** | LossMixer | MLP-обученные веса компонентов |
+
+### С нечётким контроллером
+
+| ID | Название | Описание |
+|----|----------|----------|
+| **E6** | Fuzzy T-S | Стохастический нечёткий контроллер (Variant D) |
+| **E7** | + Lyapunov | E6 + ограничение устойчивости по Ляпунову |
+| **E8** | Nonlinear T-S | Нелинейные MLP-консеквенты (лучший центроидный) |
+| **E9** | Potential | Потенциальная функция потерь |
+| **E10** | Potential + Fuzzy | E9 + нечёткий контроллер |
+
+### Варианты backbone
+
+| Суффикс | Описание |
+|---------|----------|
+| `_cnxt` | ConvNeXt-Pico вместо ResNet18 для визуальной модальности |
+| `_low_va` | Уменьшенный alignment loss (lambda_va=0.001) |
+| `_famB` | Family B (shared encoders) |
+
+---
+
+## Результаты
+
+### Лучшие результаты (Sweep 13, 10% данных, 5 эпох)
+
+| Ранг | Эксперимент | cm_R@1 | Тип |
+|------|-------------|--------|-----|
+| 1 | E1_pairwise_cnxt | **0.4727** | Pairwise + ConvNeXt |
+| 2 | E1_pairwise | 0.4422 | Pairwise + ResNet |
+| 3 | E8c_low_va | **0.4140** | Лучший центроидный |
+| 4 | H51 (w_min) | 0.4044 | Centroid + w_min floor |
+| 5 | E6 Fuzzy | 0.3470 | Нечёткий контроллер |
+
+**cm_R@1** — cross-modal Recall@1 (средний по всем направлениям поиска между модальностями).
+
+### Ключевые находки за 12 экспериментов
+
+1. **EXP-001:** Чистый центроидный InfoNCE (E2) коллапсирует; alignment+radial (E3) стабилизирует
+2. **EXP-002:** Стохастический контроллер (Variant D) работает; визуальная модальность — узкое место (img→* ≈ 0)
+3. **EXP-003:** Фиксы визуального пайплайна (P1–P4): img→centroid улучшение в 840 раз
+4. **EXP-004:** Обнаружен критический баг — контроллер замерзает на шаге ~210
+5. **EXP-007:** Баг исправлен, но живой контроллер даёт drift ±0.001–0.008 (слишком мал)
+6. **EXP-008:** E8c с нелинейными MLP-консеквентами + alpha/gamma tuning → 0.4159 (gap к E1 = 2.7pp)
+7. **EXP-009:** Диагностированы 3 корневые причины отставания центроидных: alignment collapse, death spiral контроллера, text bias в центроиде
+8. **EXP-011:** Гипотезы H51–H55 все нейтральны; E8c уже оптимален без дополнительных фиксов
+9. **ConvNeXt парадокс:** +3pp для pairwise E1, но −3pp для центроидных (over-constrained alignment)
+
+### Текущий статус
+
+**EXP-012** — полное обучение (100% данных, 15 эпох, 3 seed'а) на 6 лучших конфигурациях. Оценочное время: ~100 часов.
+
+---
+
+## Структура проекта
+
+```
+v_2/
+├── code/                  # Код обучения
+│   └── train.py           # Основной скрипт
+├── configs/               # YAML-конфигурации (50+ файлов, E1–E10 варианты)
+├── data/                  # SciLibRuModal_v2 loader (submodule)
+├── tokenizers/            # Кастомные токенизаторы для Lean/LaTeX
+├── exp_reports/           # 12 отчётов по экспериментам (EXP-001 – EXP-012)
+├── writing/               # Документация
+│   ├── MOTIVATION.md      # Мотивация и стратегия 3 публикаций
+│   ├── MATH.md            # Математическая формализация (v2.8.0)
+│   ├── HYPOTHESIS.md      # Тестируемые гипотезы H1–H55
+│   ├── TZ.md              # Техническое задание (v1.6)
+│   ├── LITOBZOR.md        # Обзор литературы
+│   └── LIT.md             # Библиография
+├── requirements.txt       # Python-зависимости
+├── init.sh                # Инициализация (venv, данные с S3)
+└── .gitignore
+```
+
+---
+
+## Быстрый старт
+
+```bash
+# Инициализация (venv + загрузка датасета с S3)
+bash init.sh
+
+# Активация окружения
+source venv/bin/activate
+
+# Запуск эксперимента (пример: E1 pairwise baseline)
+python code/train.py --config configs/e1_pairwise.yaml
+
+# Запуск с ConvNeXt backbone
+python code/train.py --config configs/e1_pairwise_cnxt.yaml
+
+# Запуск нечёткого контроллера
+python code/train.py --config configs/e8c_low_va.yaml
+```
+
+## Зависимости
+
+- Python 3.11+
+- PyTorch 2.0+ с CUDA
+- GPU: NVIDIA RTX 3090 (24GB) или аналог
+- Полный список: `requirements.txt`
 
 ## Hardware
 
 - GPU: NVIDIA RTX 3090 (24GB)
 - CUDA 12.8, PyTorch 2.10
+- Batch size: 192 (ResNet18), 96 (ConvNeXt-Pico)
