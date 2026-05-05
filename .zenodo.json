@@ -1,0 +1,62 @@
+{
+  "title": "SciLibMath v2: A Multimodal Contrastive Model for Mathematical Objects",
+  "description": "A contrastive multimodal encoder for mathematical objects across five modalities (English text, Russian text, Lean 4 code, LaTeX notation, rendered formula images). Uses centroid representation to align five modality views into a shared 256-dimensional embedding space. Trained on approximately 972,000 multimodal mathematical objects.",
+  "upload_type": "software",
+  "license": "MIT",
+  "version": "2.0.0",
+  "language": "eng",
+  "access_right": "open",
+  "keywords": [
+    "multimodal",
+    "contrastive learning",
+    "mathematical objects",
+    "Mathlib",
+    "Lean 4",
+    "LaTeX",
+    "embedding model",
+    "centroid representation",
+    "image patches",
+    "Russian text",
+    "English text"
+  ],
+  "creators": [
+    {
+      "name": "Khalov, Andrey P.",
+      "affiliation": "Moscow Institute of Physics and Technology (MIPT); Federal Research Center \"Computer Science and Control\" of the Russian Academy of Sciences",
+      "orcid": "0009-0005-4584-8245"
+    },
+    {
+      "name": "Ataeva, Olga M.",
+      "affiliation": "Federal Research Center \"Computer Science and Control\" of the Russian Academy of Sciences",
+      "orcid": "0000-0003-0367-5575"
+    },
+    {
+      "name": "Tuchkova, Natalia P.",
+      "affiliation": "Federal Research Center \"Computer Science and Control\" of the Russian Academy of Sciences",
+      "orcid": "0000-0001-5357-9640"
+    }
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/andkhalov/scilibrumodal-v2",
+      "relation": "isDerivedFrom",
+      "scheme": "url"
+    },
+    {
+      "identifier": "https://github.com/andkhalov/SciLib-GRC21",
+      "relation": "isReferencedBy",
+      "scheme": "url"
+    },
+    {
+      "identifier": "https://github.com/andkhalov/SciLibMath_v1",
+      "relation": "isNewVersionOf",
+      "scheme": "url"
+    }
+  ],
+  "communities": [
+    {
+      "identifier": "iswc"
+    }
+  ],
+  "notes": "Copyright (c) 2026 Andrey P. Khalov, Olga M. Ataeva, Natalia P. Tuchkova. Distributed under MIT (see license field)."
+}
