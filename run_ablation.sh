@@ -17,10 +17,10 @@ SWEEP_NAME="${1:-sweep}"
 # Activate venv
 source "$SCRIPT_DIR/venv/bin/activate"
 
-# Ablation overrides (EXP-008: 5% data, 5 epochs)
-OVERRIDES="data.dataset_fraction=0.05 data.batch_size=64 data.num_workers=8 training.epochs=5 eval.eval_every_steps=200"
+# Ablation overrides (EXP-010: 10% data, 5 epochs, no checkpoints)
+OVERRIDES="data.dataset_fraction=0.10 data.batch_size=64 data.num_workers=8 training.epochs=5 eval.eval_every_steps=200 checkpoint.enabled=false"
 
-# Family A experiments (10)
+# Family A experiments (12)
 EXPERIMENTS_A=(
     e1_pairwise
     e3_centroid_reg
@@ -32,6 +32,8 @@ EXPERIMENTS_A=(
     e9_potential
     e10_potential_fuzzy
     e8c_low_va
+    e8c_pairwise
+    e6_low_elastic
 )
 
 # Family B experiments (3)
@@ -55,11 +57,23 @@ EXPERIMENTS_CNXT=(
     e8c_low_va_cnxt
 )
 
-# EXP-008 (sweep11): Family A + Family B + ConvNeXt, 23 experiments
+# H-hypothesis experiments (7) — sweep13
+EXPERIMENTS_H=(
+    h51_wmin05
+    h51_wmin06
+    h52_low_align
+    h52_low_align_e4
+    h53_combined
+    h53_combined_06
+    h55_img_warmup
+)
+
+# EXP-010 (sweep13): Family A + Family B + ConvNeXt + H-hypotheses, 32 experiments
 EXPERIMENTS_F=(
     "${EXPERIMENTS_A[@]}"
     "${EXPERIMENTS_B[@]}"
     "${EXPERIMENTS_CNXT[@]}"
+    "${EXPERIMENTS_H[@]}"
 )
 
 ALL_EXPERIMENTS=("${EXPERIMENTS_F[@]}")

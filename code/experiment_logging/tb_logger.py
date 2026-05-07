@@ -23,7 +23,9 @@ class TBLogger:
     def __init__(self, cfg: DictConfig):
         exp_name = cfg.get("experiment", "unknown")
         seed = cfg.get("seed", 0)
-        run_name = f"{exp_name}_s{seed}_{int(time.time())}"
+        run_tag = cfg.get("run_tag", "")
+        prefix = f"{run_tag}_" if run_tag else ""
+        run_name = f"{prefix}{exp_name}_s{seed}_{int(time.time())}"
 
         log_dir = Path(cfg.logging.tensorboard_dir) / run_name
         self.writer = SummaryWriter(str(log_dir))
@@ -72,16 +74,16 @@ class TBLogger:
         """Log 5×5 cross-modal retrieval heatmap for R@1 and R@10.
 
         Rows = query modality, columns = target modality.
-        Diagonal = centroid LOO R@k for that modality.
+        Diagonal = mod→centroid R@k (single modality embedding → full centroid gallery).
         Off-diagonal = m1_to_m2 R@k (where available; NaN if pair not computed).
         """
         for k_val in [1, 10]:
             mat = np.full((5, 5), np.nan)
             for i, m1 in enumerate(MODALITIES):
-                # Diagonal: LOO centroid retrieval for this modality
-                loo_key = f"centroid_loo_{m1}_R@{k_val}"
-                if loo_key in metrics:
-                    mat[i, i] = metrics[loo_key]
+                # Diagonal: single modality → centroid retrieval
+                m2c_key = f"{m1}_to_centroid_R@{k_val}"
+                if m2c_key in metrics:
+                    mat[i, i] = metrics[m2c_key]
                 # Off-diagonal: cross-modal
                 for j, m2 in enumerate(MODALITIES):
                     if i == j:
@@ -109,6 +111,39 @@ class TBLogger:
             fig.colorbar(im, ax=ax, shrink=0.8)
             fig.tight_layout()
             self.writer.add_figure(f"retrieval_matrix/R@{k_val}", fig, step)
+            plt.close(fig)
+
+    def log_mod_to_centroid_heatmap(self, metrics: dict, step: int):
+        """Log 5×1 heatmap: each modality → centroid R@k (k=1 and k=10).
+
+        Uses {mod}_to_centroid_R@k: query = single modality embedding,
+        gallery = all object centroids. Match if same object.
+        """
+        for k_val in [1, 10]:
+            vals = []
+            labels = []
+            for m in MODALITIES:
+                key = f"{m}_to_centroid_R@{k_val}"
+                if key in metrics:
+                    vals.append(metrics[key])
+                    labels.append(m)
+            if not vals:
+                continue
+
+            arr = np.array(vals).reshape(-1, 1)  # [M, 1]
+            fig, ax = plt.subplots(figsize=(2.5, 4))
+            im = ax.imshow(arr, vmin=0, vmax=1, cmap="YlOrRd", aspect=0.4)
+            ax.set_yticks(range(len(labels)))
+            ax.set_yticklabels(labels)
+            ax.set_xticks([0])
+            ax.set_xticklabels([f"R@{k_val}"])
+            ax.set_title(f"Mod→Centroid R@{k_val} (step {step})")
+            for i, v in enumerate(vals):
+                ax.text(0, i, f"{v:.2f}", ha="center", va="center",
+                        color="white" if v > 0.5 else "black", fontsize=10)
+            fig.colorbar(im, ax=ax, shrink=0.6)
+            fig.tight_layout()
+            self.writer.add_figure(f"mod_to_centroid/R@{k_val}", fig, step)
             plt.close(fig)
 
     def log_pca_simplex(self, embeddings: dict, centroids: torch.Tensor, step: int,

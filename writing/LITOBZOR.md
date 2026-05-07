@@ -86,6 +86,75 @@ $$\mathcal{L}_{\text{grad}}(t) = \sum_i \bigl| G_i(t) - \bar{G}(t) \cdot r_i(t) 
 - GradNorm не имеет символьного слоя (нет интерпретируемых правил).
 - GradNorm не обеспечивает stability guarantees (нет Lyapunov).
 
+**Алгоритм GradNorm (Algorithm 1 из [GRADNORM-2018]):**
+
+1. Инициализация: $w_i(0) = 1$ для всех задач $i = 1..T$; записать начальные $L_i(0)$.
+2. На каждом шаге $t$:
+   - Вычислить $G_W^{(i)}(t) = \|\nabla_{W_{\text{shared}}}[w_i(t) \cdot L_i(t)]\|_2$ для каждой задачи.
+   - Вычислить $\bar{G}_W(t) = \frac{1}{T}\sum_i G_W^{(i)}(t)$.
+   - Вычислить inverse training rate: $\tilde{L}_i(t) = L_i(t)/L_i(0)$, $r_i(t) = \tilde{L}_i(t) / \mathbb{E}[\tilde{L}_j(t)]$.
+   - Вычислить $\mathcal{L}_{\text{grad}} = \sum_i |G_W^{(i)}(t) - \bar{G}_W(t) \cdot r_i(t)^\alpha|$.
+   - Обновить $w_i$ градиентным спуском по $\mathcal{L}_{\text{grad}}$ (target — stop gradient).
+   - Ренормализовать: $w_i \leftarrow w_i \cdot T / \sum_j w_j$.
+
+Гиперпараметры: $\alpha$ (asymmetry, типично 1.5), $\text{lr}_w$ (типично 0.025).
+
+**Reference implementation:** [LucasBoTang/GradNorm](https://github.com/LucasBoTang/GradNorm) (PyTorch).
+
+#### 2.2b PCGrad: gradient surgery
+
+PCGrad [PCGRAD-2020] — метод «хирургии градиентов» для мультизадачного обучения. Вместо адаптации весов лоссов, PCGrad модифицирует направление градиента, удаляя конфликтующие компоненты.
+
+**Определение конфликта:** градиенты задач $g_i$ и $g_j$ конфликтуют, если $\cos(g_i, g_j) < 0$.
+
+**Алгоритм PCGrad (Algorithm 1 из [PCGRAD-2020]):**
+
+1. Вычислить per-task градиенты: $g_i = \nabla_\theta L_i(\theta)$ для $i = 1..T$.
+2. Для каждой задачи $i$, для каждой другой задачи $j \neq i$ (в случайном порядке):
+   - Если $g_i^{\text{PC}} \cdot g_j < 0$: проецировать $g_i^{\text{PC}} \leftarrow g_i^{\text{PC}} - \frac{g_i^{\text{PC}} \cdot g_j}{\|g_j\|^2} g_j$.
+3. Итоговый градиент: $g^{\text{PC}} = \sum_i g_i^{\text{PC}}$.
+
+PCGrad не вводит дополнительных гиперпараметров (hyperparameter-free). Теоретическая гарантия: сходимость $O(1/\sqrt{T})$ для невыпуклых задач (Theorem 1).
+
+**Overhead:** $T^2$ проверок конфликтов на шаг; для $T=5$ — 20 проверок. Требует $T$ отдельных backward pass.
+
+**Отличие от нашего подхода:**
+- PCGrad работает в пространстве градиентов (gradient surgery), наш контроллер — в пространстве сигналов (loss values).
+- PCGrad не производит интерпретируемых весов; наш контроллер даёт явную траекторию $\lambda(t)$.
+- PCGrad ортогонален к weight-based методам (можно комбинировать).
+
+**Reference implementation:** [WeiChengTseng/Pytorch-PCGrad](https://github.com/WeiChengTseng/Pytorch-PCGrad) (PyTorch).
+
+#### 2.2c Uncertainty Weighting: балансировка через неопределённость
+
+Метод Kendall et al. [KENDALL-2018] основан на гомоскедастической (task-dependent) неопределённости. Из maximum likelihood вывод для $T$ задач:
+
+$$\mathcal{L}(W, \sigma_1..\sigma_T) = \sum_{k=1}^{T} \left[\frac{1}{\sigma_k^2} L_k(W) + \log \sigma_k\right]$$
+
+где $\sigma_k$ — параметр неопределённости задачи $k$, обучаемый совместно с весами модели.
+
+**Практическая реализация** (log-variance параметризация для численной стабильности):
+
+$$s_k = \log \sigma_k^2 \quad \Rightarrow \quad \mathcal{L}_k^{\text{uw}} = \exp(-s_k) \cdot L_k + s_k$$
+
+Для classification-подобных лоссов (наш случай — InfoNCE ≈ cross-entropy) precision = $\exp(-s_k)$ (без множителя $1/2$). Задачи с высокой неопределённостью (большой $\sigma_k$) получают низкий вес.
+
+**Ключевые свойства:**
+- Минимальный overhead: $T$ дополнительных скалярных параметров.
+- Нет дополнительных гиперпараметров (кроме инициализации $s_k(0) = 0$).
+- Теоретически обоснован (Bayesian framework).
+- Не учитывает gradient norms и training dynamics — реагирует только через backpropagation.
+
+**Отличие от нашего подхода:**
+- Uncertainty Weighting — статистический (Bayesian), наш контроллер — кибернетический (fuzzy rules + Lyapunov).
+- UW не видит collapse/stagnation/conflict signals напрямую.
+- UW не имеет elastic mean-reversion или noise exploration.
+
+**Reference implementation:** [Mikoto10032/AutomaticWeightedLoss](https://github.com/Mikoto10032/AutomaticWeightedLoss) (PyTorch).
+
+**Цитата:**
+Kendall A., Gal Y., Cipolla R. "Multi-Task Learning Using Uncertainty to Weigh Losses for Scene Geometry and Semantics." CVPR, pp. 7482–7491, 2018. arXiv:1705.07115.
+
 ---
 
 ### 3. Contrastive loss для $M > 2$ модальностей

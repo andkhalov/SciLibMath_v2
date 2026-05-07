@@ -1,0 +1,50 @@
+# E8cf_v8: Per-rule specialized MLP training signal
+# Each MLP_r gets a surrogate loss matching its rule semantics:
+#   R0: minimize correction norm (healthy = no action)
+#   R1: minimize modality loss variance (imbalance)
+#   R2: push λ_reg up (collapse)
+#   R3: push λ_align up (stagnation)
+#   R4: push τ up (overshoot)
+#   R5: minimize loss variance (conflict)
+#   R6: minimize img loss contribution (visual)
+# Separate backward: model unaffected.
+experiment: e8cf_v8
+
+model:
+  visual_backbone: convnext_pico.d1_in1k
+
+loss:
+  type: composite
+  tau: 0.07
+  p_drop: 0.3
+  lambda_align: 0.3
+  lambda_rad: 0.1
+  lambda_reg: 0.05
+  lambda_va: 0.01
+  w_g: 1.0
+  C_clip: 10.0
+  rho: 0.1
+  alpha_tau: 0.5
+  tau_target: 0.0
+  tau_min: 0.01
+  tau_max: 0.5
+  weights:
+    en: 1.0
+    ru: 1.0
+    lean: 1.5
+    latex: 1.5
+    img: 1.0
+
+controller:
+  alpha: 0.01
+  warmup_steps: 200
+  step_frequency: 10
+  noise_sigma: 0.01
+  noise_anneal: true
+  elastic_gamma: 0.002
+  nonlinear_consequents: true
+  consequent_hidden: 32
+  init_scale: 0.01
+  mlp_lr_multiplier: 10.0
+  mlp_min_norm: 5.0
+  mlp_norm_gamma: 1.0

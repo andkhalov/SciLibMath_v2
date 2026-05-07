@@ -1,0 +1,35 @@
+# BL1: GradNorm (Chen et al. ICML 2018)
+# Baseline for EXP-013: replaces T-S fuzzy controller with gradient norm matching
+# Same composite loss structure as E8c, static hyperparams, adaptive modality weights via GradNorm
+experiment: bl1_gradnorm
+
+model:
+  visual_backbone: convnext_pico.d1_in1k
+
+loss:
+  type: composite
+  tau: 0.07
+  p_drop: 0.3
+  lambda_align: 0.3
+  lambda_rad: 0.1
+  lambda_reg: 0.05
+  lambda_va: 0.01
+  w_g: 1.0
+  C_clip: 10.0
+  rho: 0.1
+  alpha_tau: 0.5
+  tau_target: 0.0
+  tau_min: 0.01
+  tau_max: 0.5
+  weights:
+    en: 1.0
+    ru: 1.0
+    lean: 1.0
+    latex: 1.0
+    img: 1.0
+
+# GradNorm config
+baseline:
+  type: gradnorm
+  alpha: 1.5       # asymmetry parameter (paper default)
+  lr_w: 0.025      # learning rate for task weights (paper default)

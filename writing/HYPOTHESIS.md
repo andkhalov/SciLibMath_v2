@@ -134,6 +134,49 @@
 | **H49** | final_div_factor=10 убирает weight norm plateau | weight_norm last step | > weight_norm at step 10K | — |
 | **H50** | Combined fixes (B+C+D) улучшают centroid-based | E10 cm_R@1 | > 0.42 (было 0.397) | — |
 
+#### Результаты H41-H50 (sweep11, 10% данных, 5 эпох, 23 эксперимента)
+
+> Sweep11 завершён 2026-03-16 10:06 MSK, 23/23 OK. Ref: DIARY.md 2026-03-16 11:30.
+
+| ID | Вердикт | Ключевые числа | Комментарий |
+|----|---------|----------------|-------------|
+| **H41** | **ПОДТВЕРЖДЕНА** | img→lat: E1_cnxt=0.3364 vs E1=0.1978 (+70%) | ConvNeXt даёт лучшие визуальные фичи для img→text |
+| **H42** | **ПОДТВЕРЖДЕНА** | E1_cnxt=0.4783 > E1=0.4430 (+3.5pp) | Новый рекорд проекта. Превзошёл sweep10 E1=0.4705 на 10% данных |
+| **H43** | **ОТВЕРГНУТА** | E10_cnxt=0.3043 < E10=0.3412 (-3.7pp) | ConvNeXt ХУЖЕ для centroid-based. Регуляризация overconstrains CNXT embeddings (D_intra=0.030 vs 0.026) |
+| **H44** | **ПОДТВЕРЖДЕНА** | E6_cnxt=0.3361 > E3_cnxt=0.2982 (+3.8pp) | Controller помогает и с ConvNeXt backbone |
+| **H45** | **ОТВЕРГНУТА** | Δ_pairwise=+0.035, Δ_centroid=-0.037 | Обратный эффект: CNXT помогает pairwise, вредит centroid. Парадокс — идеальное img→c alignment (0.94) ухудшает cm_R@1 |
+| **H46** | **ЧАСТИЧНО** | Нет прямых L_va/L_total в логах | Косвенно: E8c_low_va скачок +4pp vs sweep10 при меньших данных |
+| **H47** | **ЧАСТИЧНО** | Нет lambda drift в stdout логах | Косвенно: E8c #7→#3 в ранке, E6-E4 gap вырос. Нужен TensorBoard |
+| **H48** | **ПОДТВЕРЖДЕНА** | E6-E4=+0.035 (было +0.025 в sweep10) | Gap увеличился на 40% — controller стал эффективнее |
+| **H49** | **НЕ ПРОВЕРЕНА** | weight_norm не в stdout логах | Требуется анализ TensorBoard runs |
+| **H50** | **ОТВЕРГНУТА** | E10=0.3412 < 0.42 | E10 не достиг 0.42. Но E8c_low_va=0.4159 ≈ 0.42 — nonlinear controller выиграл вместо potential+fuzzy |
+
+**Итог H41-H50:** 4 подтверждены, 3 отвергнуты, 2 частично, 1 не проверена.
+
+**Ключевой неожиданный результат:** E8c (nonlinear MLP consequents) — главный бенефициар EXP-008.
+Скачок с rank #7 на #3, gap к E1 сократился с 9.5pp до 2.7pp. Гипотеза H50 формулировала
+ожидание для E10, но выиграл E8c — нелинейные консеквенты + ослабленный elastic (γ÷5) оказались
+важнее, чем потенциальные функции + fuzzy controller.
+
 ---
 
-*HYPOTHESIS.md v2.0 | SciLibMath_v2 | 2026-03-15*
+### Гипотезы EXP-010: H51-H55 (sweep13, зафиксированы до запуска)
+
+> Ref: exp_reports/exp009_sweep12_interim_analysis.md (диагностика)
+> Мотивация: sweep12 показал три корневые проблемы:
+> (1) alignment-collapse tradeoff, (2) controller death spiral для img, (3) text centroid bias
+
+| ID | Гипотеза | Конфиг | Метрика | Ожидание | Ref |
+|----|----------|--------|---------|----------|-----|
+| **H51** | w_min floor предотвращает death spiral: w_m ≥ 0.5 → img→c восстанавливается | h51_wmin05, h51_wmin06 | img→c R@1 | > 0.5 (was 0.12 in E6, 0.37 in E8c) | M.6.3 |
+| **H52** | λ_align÷10 сохраняет модальную структуру при D_intra > 0.1 | h52_low_align (E3-based), h52_low_align_e4 (E4-based) | cm_R@1, D_intra | cm_R@1 > 0.35, D_intra > 0.1 (was 0.015) | M.3.3 |
+| **H53** | w_min + reduced align (combined) = best controller-based | h53_combined, h53_combined_06 | cm_R@1 | > 0.42 (E8c_low_va=0.416) | M.6.3, M.3.3 |
+| **H54** | Asymmetric centroid weighting (α_img=0.5) компенсирует text bias | — (deferred) | cm_R@1, img→lat R@1 | — | M.0 |
+| **H55** | Alignment warmup (1000 steps) даёт img время войти в пространство | h55_img_warmup | img→c R@1 | > 0.37 (E8c baseline) | M.3.3 |
+
+**H54 deferred:** Требует изменения модели (centroid computation), не конфига/контроллера.
+Будет реализован в sweep14 если H51-H53 недостаточны.
+
+---
+
+*HYPOTHESIS.md v2.2 | SciLibMath_v2 | 2026-03-17*

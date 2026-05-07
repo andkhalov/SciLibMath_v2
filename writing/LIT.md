@@ -146,6 +146,14 @@
 
 ---
 
+[KENDALL-2018] Kendall A., Gal Y., Cipolla R. "Multi-Task Learning Using Uncertainty to Weigh Losses for Scene Geometry and Semantics." CVPR, pp. 7482–7491, 2018. arXiv:1705.07115.
+Файл: отсутствует локально (доступен на arXiv).
+Зачем нам: Адаптивная балансировка лоссов через homoscedastic uncertainty (Bayesian framework). Прямой baseline для нашего fuzzy controller: вместо 7 правил — 5 скалярных log-variance параметров. Самый простой из трёх baseline-ов.
+Цитирование: Eq. 1–3 (multi-task loss derivation), Sec. 3.1 (homoscedastic uncertainty), Practical implementation (log-variance trick).
+**Paper:** C (baseline comparison, BL3)
+
+---
+
 [CAGRAD-2021] Liu B., Liu X., Jin X., Stone P., Liu Q. "Conflict-Averse Gradient Descent for Multi-task Learning." NeurIPS, 2021.
 Файл: `literature/addition/2110.14048v2.pdf`
 Зачем нам: Находит direction минимизирующий worst-case conflict. Теоретически обоснован. Baseline для E6/E7.

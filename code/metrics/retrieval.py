@@ -1,5 +1,9 @@
 """Retrieval metrics: R@k for centroid and cross-modal retrieval.
 Ref: MATH.md M.8, TZ.md Sec 9
+
+Two modes:
+  - recall_at_k: batched cosine search (RAG-style, O(chunk) memory)
+  - recall_at_k_matrix: full NxN similarity matrix (sweep-compatible, OOM on large N)
 """
 
 import torch
@@ -7,13 +11,51 @@ import torch.nn.functional as F
 
 from models.constants import MODALITIES
 
+# Chunk size for batched retrieval (256 queries × N targets ≈ manageable)
+_QUERY_CHUNK = 256
+
 
 def recall_at_k(
     queries: torch.Tensor,
     targets: torch.Tensor,
     k: int = 1,
 ) -> float:
-    """Compute Recall@k: fraction of queries where correct target is in top-k.
+    """Compute Recall@k via batched cosine search (RAG-style).
+
+    Simulates real retrieval: for each query, search all targets by
+    cosine similarity and check if the correct target is in top-k.
+    Memory: O(chunk_size × N) instead of O(N²).
+
+    Args:
+        queries: [N, d] query embeddings (L2-normalized)
+        targets: [N, d] target embeddings (L2-normalized)
+        k: top-k threshold
+    Returns:
+        R@k as float in [0, 1]
+    """
+    N = queries.size(0)
+    hits = 0
+
+    for start in range(0, N, _QUERY_CHUNK):
+        end = min(start + _QUERY_CHUNK, N)
+        chunk = queries[start:end]                    # [chunk, d]
+        sim = torch.mm(chunk, targets.t())            # [chunk, N]
+        _, topk_idx = sim.topk(k, dim=1)              # [chunk, k]
+        correct = torch.arange(start, end, device=queries.device).unsqueeze(1)
+        hits += (topk_idx == correct).any(dim=1).float().sum().item()
+
+    return hits / N
+
+
+def recall_at_k_matrix(
+    queries: torch.Tensor,
+    targets: torch.Tensor,
+    k: int = 1,
+) -> float:
+    """Compute Recall@k via full NxN similarity matrix.
+
+    WARNING: O(N²) memory — will OOM for N > ~15k on 24GB GPU.
+    Kept for backward compatibility with sweep10-13 results.
 
     Args:
         queries: [N, d] query embeddings (normalized)
@@ -22,17 +64,11 @@ def recall_at_k(
     Returns:
         R@k as float in [0, 1]
     """
-    # Similarity matrix [N, N]
     sim = torch.mm(queries, targets.t())  # [N, N]
     N = sim.size(0)
-
-    # For each query, find top-k indices
-    _, topk_idx = sim.topk(k, dim=1)  # [N, k]
-
-    # Check if correct index (diagonal) is in top-k
-    correct = torch.arange(N, device=sim.device).unsqueeze(1)  # [N, 1]
-    hits = (topk_idx == correct).any(dim=1).float()  # [N]
-
+    _, topk_idx = sim.topk(k, dim=1)
+    correct = torch.arange(N, device=sim.device).unsqueeze(1)
+    hits = (topk_idx == correct).any(dim=1).float()
     return hits.mean().item()
 
 

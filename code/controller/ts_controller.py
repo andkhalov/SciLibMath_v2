@@ -32,10 +32,13 @@ class TSFuzzyController:
                  total_steps: int = 10000,
                  nonlinear_consequents: bool = False,
                  consequent_hidden: int = 32,
-                 init_scale: float = 0.01):
+                 init_scale: float = 0.01,
+                 w_min: float = None):
         self.device = device or torch.device("cpu")
         self.alpha = alpha
         self.nonlinear_consequents = nonlinear_consequents
+        self.w_min = w_min  # H51: minimum modality weight floor
+        self.skip_bounds = False  # v7d/v8d: disable project_to_bounds
 
         # Build rules with alpha=1.0 (scaling handled in elastic_step)
         self.rules = build_rule_matrices(alpha=1.0)
@@ -174,10 +177,13 @@ class TSFuzzyController:
         u_t = torch.zeros(U_DIM, device=s_t.device)
 
         for r, (A_r, b_r) in enumerate(self.rules):
+            linear = A_r @ s_t + b_r  # [11] hardcoded base strategy
             if self.nl_consequents is not None:
-                consequent = self.nl_consequents[r](s_t)  # [11] MLP (MATH.md M.3.8)
+                # Residual: MLP learns correction to linear rule (v5/e8cf_real)
+                nonlinear = self.nl_consequents[r](s_t)  # [11] learnable correction
+                consequent = linear + nonlinear
             else:
-                consequent = A_r @ s_t + b_r  # [11] linear
+                consequent = linear
             u_t = u_t + h_bar[r] * consequent
 
         return u_t, h_bar
@@ -227,6 +233,8 @@ class TSFuzzyController:
             lambda_t, u_t,
             alpha=self.alpha,
             gamma=self.elastic_gamma,
+            w_min=self.w_min,
+            skip_bounds=self.skip_bounds,
         )
 
         return lambda_new, u_t, h_bar

@@ -133,12 +133,20 @@ LAMBDA_DEFAULT = torch.tensor([
 ])
 
 
-def project_to_bounds(lam: torch.Tensor, bounds: torch.Tensor = None) -> torch.Tensor:
+def project_to_bounds(lam: torch.Tensor, bounds: torch.Tensor = None,
+                      w_min: float = None) -> torch.Tensor:
     """Project λ_t onto feasible box Λ (MATH.md M.3.6).
     Π_Λ(λ) = clamp(λ, lower, upper)
+
+    Args:
+        w_min: if set, override lower bound for modality weights (indices 5-10)
+               to max(original_lower, w_min). Prevents death spiral (H51).
     """
     if bounds is None:
         bounds = LAMBDA_BOUNDS.to(lam.device)
+    if w_min is not None:
+        bounds = bounds.clone()
+        bounds[5:11, 0] = torch.clamp(bounds[5:11, 0], min=w_min)
     return torch.clamp(lam, min=bounds[:, 0], max=bounds[:, 1])
 
 
@@ -198,6 +206,8 @@ def elastic_step(
     gamma: float = 0.01,
     lambda_default: torch.Tensor = None,
     bounds: torch.Tensor = None,
+    w_min: float = None,
+    skip_bounds: bool = False,
 ) -> torch.Tensor:
     """Stochastic T-S update with elastic mean-reversion (MATH.md M.6.3b).
 
@@ -210,6 +220,7 @@ def elastic_step(
         gamma: elastic reversion coefficient
         lambda_default: [11] default values for reversion
         bounds: [11, 2] box constraints
+        w_min: if set, override lower bound for modality weights (H51)
     """
     if lambda_default is None:
         lambda_default = LAMBDA_DEFAULT.to(lambda_t.device)
@@ -218,4 +229,6 @@ def elastic_step(
 
     reversion = gamma * (lambda_default - lambda_t)
     lambda_new = lambda_t + alpha * u_t + reversion
-    return project_to_bounds(lambda_new, bounds)
+    if skip_bounds:
+        return lambda_new
+    return project_to_bounds(lambda_new, bounds, w_min=w_min)

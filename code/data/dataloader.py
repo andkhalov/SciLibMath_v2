@@ -69,21 +69,29 @@ def create_dataloaders(
     batch_size: int = 64,
     dataset_fraction: float = 1.0,
     test_fraction: float = 0.05,
+    val_fraction: float = 0.0,
     num_workers: int = 4,
     pin_memory: bool = True,
     seed: int = 42,
     tokenizer_name: str = "mlsa-iai-msu-lab/sci-rus-tiny3.5-zh",
     max_length: int = 128,
     tokenizers: dict | None = None,
-) -> tuple[DataLoader, DataLoader, int]:
-    """Create train and test DataLoaders with fixed random split.
+) -> tuple[DataLoader, DataLoader, DataLoader | None, int]:
+    """Create train, val, and test DataLoaders with fixed random split.
+
+    Split order: test (held-out, never seen) | val (eval during training) | train.
+    When val_fraction=0, val_loader is None and test is used for eval (backward compat).
 
     Args:
         dataset_fraction: fraction of data to use (e.g. 0.1 for 10% ablation sweep)
+        test_fraction: held-out test set fraction (model NEVER sees this)
+        val_fraction: validation set fraction (used for eval during training)
         tokenizers: per-modality tokenizer dict from prepare_tokenizers() (optional)
 
     Returns:
-        (train_loader, test_loader, dataset_size)
+        (train_loader, val_loader_or_test_loader, test_loader_or_None, dataset_size)
+        When val_fraction=0: returns (train_loader, test_loader, None, n)
+        When val_fraction>0: returns (train_loader, val_loader, test_loader, n)
     """
     full_ds = SciLibModalDataset(data_dir=data_dir, image_root=image_root)
     n = len(full_ds)
@@ -99,11 +107,12 @@ def create_dataloaders(
         n = n_sample
 
     n_test = int(n * test_fraction)
+    n_val = int(n * val_fraction)
     test_idx = indices[:n_test].tolist()
-    train_idx = indices[n_test:].tolist()
+    val_idx = indices[n_test:n_test + n_val].tolist()
+    train_idx = indices[n_test + n_val:].tolist()
 
     train_ds = torch.utils.data.Subset(full_ds, train_idx)
-    test_ds = torch.utils.data.Subset(full_ds, test_idx)
 
     collator = MultimodalCollator(
         tokenizer_name=tokenizer_name,
@@ -121,14 +130,20 @@ def create_dataloaders(
         drop_last=True,
     )
 
-    test_loader = DataLoader(
-        test_ds,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=num_workers,
-        pin_memory=pin_memory,
-        collate_fn=collator,
-        drop_last=False,
-    )
+    def _make_loader(idx_list):
+        ds = torch.utils.data.Subset(full_ds, idx_list)
+        return DataLoader(
+            ds, batch_size=batch_size, shuffle=False,
+            num_workers=num_workers, pin_memory=pin_memory,
+            collate_fn=collator, drop_last=False,
+        )
 
-    return train_loader, test_loader, n
+    if n_val > 0:
+        val_loader = _make_loader(val_idx)
+        test_loader = _make_loader(test_idx)
+        print(f"  Split: {len(train_idx)} train / {n_val} val / {n_test} test")
+        return train_loader, val_loader, test_loader, n
+    else:
+        test_loader = _make_loader(test_idx)
+        print(f"  Split: {len(train_idx)} train / {n_test} test")
+        return train_loader, test_loader, None, n
